@@ -12,6 +12,7 @@ All tasks share the same GLIM encoder and operate on the same eeg_emb vector (ei
 """
 
 import os
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,10 +21,38 @@ from typing import Literal, Dict, Any
 from copy import deepcopy
 from torchmetrics.functional.classification import multiclass_accuracy
 from sklearn.metrics import confusion_matrix
-from transformers import AutoTokenizer, T5ForConditionalGeneration, get_cosine_with_min_lr_schedule_with_warmup_lr_rate
+from transformers import AutoTokenizer, T5ForConditionalGeneration
 from transformers.modeling_outputs import BaseModelOutput
 
 from .modules import PromptEmbedder, EEGEncoder, Aligner
+
+try:
+    from transformers import get_cosine_with_min_lr_schedule_with_warmup_lr_rate
+except ImportError:
+    def get_cosine_with_min_lr_schedule_with_warmup_lr_rate(
+        optimizer, num_warmup_steps: int, num_training_steps: int, min_lr: float
+    ):
+        """Compatibility fallback for Transformers releases lacking this helper."""
+        if num_training_steps <= 0:
+            raise ValueError("num_training_steps must be positive")
+        base_lrs = [group["lr"] for group in optimizer.param_groups]
+        if any(base_lr <= 0 or min_lr > base_lr for base_lr in base_lrs):
+            raise ValueError("min_lr must be non-negative and no greater than every base learning rate")
+
+        def lr_lambda(current_step: int, *, base_lr: float):
+            if num_warmup_steps > 0 and current_step < num_warmup_steps:
+                return float(current_step) / float(max(1, num_warmup_steps))
+            progress = float(current_step - num_warmup_steps) / float(
+                max(1, num_training_steps - num_warmup_steps)
+            )
+            progress = min(max(progress, 0.0), 1.0)
+            min_ratio = min_lr / base_lr
+            return min_ratio + (1.0 - min_ratio) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+        return torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            [lambda step, base_lr=base_lr: lr_lambda(step, base_lr=base_lr) for base_lr in base_lrs],
+        )
 
 
 class SEMKEY_PARALLEL(L.LightningModule):
@@ -79,6 +108,7 @@ class SEMKEY_PARALLEL(L.LightningModule):
                  lr: float = 1e-4,
                  min_lr: float = 1e-6,
                  warmup_epochs: int = 0,
+                 task_prompt_mode: Literal['released', 'canonical'] = 'released',
                  ):
         super().__init__()
 
@@ -104,6 +134,9 @@ class SEMKEY_PARALLEL(L.LightningModule):
         self.text_model_id = text_model_id
         self.model_cache_dir = model_cache_dir
         self.batch_size = batch_size
+        if task_prompt_mode not in {'released', 'canonical'}:
+            raise ValueError(f"Unknown task_prompt_mode: {task_prompt_mode}")
+        self.task_prompt_mode = task_prompt_mode
 
         # Loss weights
         self.clip_loss_weight = clip_loss_weight
@@ -127,7 +160,7 @@ class SEMKEY_PARALLEL(L.LightningModule):
 
         # Prompt configuration
         self.prompt_keys = {
-            'task': ['<UNK>'] + ['<NR>', '<TSR>'],
+            'task': ['<UNK>'] + (['<NR>', '<TSR>'] if task_prompt_mode == 'released' else ['<SR>', '<NR>', '<TSR>']),
             'dataset': ['<UNK>'] + ['ZuCo1', 'ZuCo2'],
             'subject': ['<UNK>'] + ['ZAB', 'ZDM', 'ZDN', 'ZGW', 'ZJM', 'ZJN',
                                     'ZJS', 'ZKB', 'ZKH', 'ZKW', 'ZMG', 'ZPH',
@@ -135,6 +168,8 @@ class SEMKEY_PARALLEL(L.LightningModule):
                                     'YFS', 'YHS', 'YIS', 'YLS', 'YMD', 'YMS',
                                     'YRH', 'YRK', 'YRP', 'YSD', 'YSL', 'YTL'],
         }
+        if task_prompt_mode == 'canonical' and prompt_nums == (3, 3, 31):
+            prompt_nums = (4, 3, 31)
 
         # Build encoder components
         self.p_embedder = PromptEmbedder(input_dim, prompt_nums, prompt_dropout_probs, self.prompt_keys)

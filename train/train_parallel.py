@@ -186,6 +186,10 @@ def parse_args():
         action='store_true',
         help='Whether or not to use prompt embeddings'
     )
+    parser.add_argument(
+        '--task_prompt_mode', choices=['released', 'canonical'], default='released',
+        help='released collapses task1/task2 to <NR>; canonical preserves <SR>/<NR>/<TSR>'
+    )
     
     # MLP classifier arguments
     parser.add_argument(
@@ -676,7 +680,8 @@ def main():
         use_zuco1_only=args.use_zuco1_only,
         use_spectral_whitening=args.spectral_whitening,
         use_robust_normalize=args.robust_normalize,
-        seed=args.datasplit_seed
+        seed=args.datasplit_seed,
+        task_prompt_mode=args.task_prompt_mode
     )
 
     if is_main_process():
@@ -739,6 +744,7 @@ def main():
             lr=args.lr,
             min_lr=args.min_lr,
             warmup_epochs=args.warmup_epochs,
+            task_prompt_mode=args.task_prompt_mode,
         )
     
     if is_main_process():

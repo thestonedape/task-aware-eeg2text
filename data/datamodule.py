@@ -58,6 +58,7 @@ class GLIMDataModule(pl.LightningDataModule):
                  use_spectral_whitening: bool = SPECTRAL_WHITENING,
                  use_robust_normalize: bool = ROBUST_NORMALIZE,
                  seed: int = SEED,
+                 task_prompt_mode: Literal['released', 'canonical'] = 'released',
                  ):
         super().__init__()
         assert os.path.exists(data_path)
@@ -74,6 +75,7 @@ class GLIMDataModule(pl.LightningDataModule):
         self.use_spectral_whitening = use_spectral_whitening
         self.use_robust_normalize = use_robust_normalize
         self.seed = seed # Set to None to use default split
+        self.task_prompt_mode = task_prompt_mode
 
         # Handle both single and multi-task modes
         if classification_label_keys is not None:
@@ -194,11 +196,11 @@ class GLIMDataModule(pl.LightningDataModule):
             print(f'[Rank {local_rank}] Loaded embeddings from {self.embeddings_path}')
         
         if stage == "fit":
-            self.train_set = ZuCoDataset(df, 'train', embeddings_dict=embeddings_dict, classification_label_keys=self.classification_label_keys, regression_label_keys=self.regression_label_keys)
-            self.val_set = ZuCoDataset(df, 'val', embeddings_dict=embeddings_dict, eval_noise_input=self.eval_noise_input, classification_label_keys=self.classification_label_keys, regression_label_keys=self.regression_label_keys)
+            self.train_set = ZuCoDataset(df, 'train', embeddings_dict=embeddings_dict, classification_label_keys=self.classification_label_keys, regression_label_keys=self.regression_label_keys, task_prompt_mode=self.task_prompt_mode)
+            self.val_set = ZuCoDataset(df, 'val', embeddings_dict=embeddings_dict, eval_noise_input=self.eval_noise_input, classification_label_keys=self.classification_label_keys, regression_label_keys=self.regression_label_keys, task_prompt_mode=self.task_prompt_mode)
             self.n_target_text = self.val_set.n_target_text
         elif stage == "test":
-            self.test_set = ZuCoDataset(df, 'test', embeddings_dict=embeddings_dict, eval_noise_input=self.eval_noise_input, classification_label_keys=self.classification_label_keys, regression_label_keys=self.regression_label_keys)
+            self.test_set = ZuCoDataset(df, 'test', embeddings_dict=embeddings_dict, eval_noise_input=self.eval_noise_input, classification_label_keys=self.classification_label_keys, regression_label_keys=self.regression_label_keys, task_prompt_mode=self.task_prompt_mode)
             self.n_target_text = self.test_set.n_target_text
         print(f'[Rank {local_rank}][{self.__class__.__name__}] running `setup()`...Done!','\U0001F60B'*3)
             
@@ -509,7 +511,8 @@ class ZuCoDataset(Dataset):
                  eval_noise_input: bool = False,
                  classification_label_key: str = None,
                  classification_label_keys: list = None,
-                 regression_label_keys: list = None
+                 regression_label_keys: list = None,
+                 task_prompt_mode: Literal['released', 'canonical'] = 'released',
                  ):
         
         # Handle both single and multi-task modes
@@ -524,6 +527,9 @@ class ZuCoDataset(Dataset):
         self.classification_label_key = self.classification_label_keys[0]
 
         self.regression_label_keys = regression_label_keys or []
+        if task_prompt_mode not in {'released', 'canonical'}:
+            raise ValueError(f"Unknown task_prompt_mode: {task_prompt_mode}")
+        self.task_prompt_mode = task_prompt_mode
 
         # pt_target_keys = ['input text']
         pt_target_keys = ['lexical simplification (v0)', 'lexical simplification (v1)', 
@@ -568,7 +574,14 @@ class ZuCoDataset(Dataset):
         target_text = df[target_key].tolist()
         
         raw_t_keys = df['task'].tolist()
-        t_prompts = ['<NR>' if t_key != 'task3' else '<TSR>' for t_key in raw_t_keys]
+        if self.task_prompt_mode == 'canonical':
+            canonical_prompts = {'task1': '<SR>', 'task2': '<NR>', 'task3': '<TSR>'}
+            unknown = sorted(set(raw_t_keys) - set(canonical_prompts))
+            if unknown:
+                raise ValueError(f"Unknown raw task keys in canonical prompt mode: {unknown}")
+            t_prompts = [canonical_prompts[t_key] for t_key in raw_t_keys]
+        else:
+            t_prompts = ['<NR>' if t_key != 'task3' else '<TSR>' for t_key in raw_t_keys]
         # t_prompts = ['<NR>'] * len(raw_t_keys)
         d_prompts = df['dataset'].tolist()
         s_prompts = df['subject'].tolist()

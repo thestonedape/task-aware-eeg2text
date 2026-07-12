@@ -118,6 +118,12 @@ def parse_args():
         action="store_true",
         help="If set, drop all ZuCo2 samples and use only ZuCo1 dataset"
     )
+    parser.add_argument(
+        "--task_prompt_mode",
+        choices=["released", "canonical"],
+        default="released",
+        help="released collapses task1/task2 to <NR>; canonical preserves <SR>/<NR>/<TSR>"
+    )
     
     args = parser.parse_args()
     
@@ -160,6 +166,30 @@ def filter_zuco1_only(df: pd.DataFrame) -> pd.DataFrame:
     print(f"  - ZuCo2 samples dropped: {dropped_len}")
     
     return df_filtered
+
+
+def ensure_stable_sample_ids(df: pd.DataFrame) -> pd.DataFrame:
+    """Preserve canonical IDs or derive deterministic IDs before any index reset."""
+    df = df.copy()
+    if 'source_dataframe_row_index' not in df.columns:
+        df['source_dataframe_row_index'] = df.index.astype(int)
+    if 'sample_id' not in df.columns:
+        if 'trial_id' in df.columns:
+            df['sample_id'] = df['trial_id'].astype(str)
+        else:
+            required = {'dataset', 'task', 'subject'}
+            missing = required - set(df.columns)
+            if missing:
+                raise ValueError(f"Cannot derive sample_id; missing columns: {sorted(missing)}")
+            df['sample_id'] = [
+                f"{dataset}::{task}::{subject}::row{int(row_index):06d}"
+                for dataset, task, subject, row_index in zip(
+                    df['dataset'], df['task'], df['subject'], df['source_dataframe_row_index']
+                )
+            ]
+    if df['sample_id'].isna().any() or not df['sample_id'].is_unique:
+        raise ValueError("sample_id must be non-null and unique before packing")
+    return df
 
 
 def load_model_from_checkpoint(checkpoint_path: str, device: torch.device) -> SEMKEY_PARALLEL:
@@ -396,7 +426,7 @@ def predict_all_tasks_with_single_model(
     return combined
 
 
-def create_prediction_dataloader(df: pd.DataFrame, split: str, batch_size: int):
+def create_prediction_dataloader(df: pd.DataFrame, split: str, batch_size: int, task_prompt_mode: str = 'released'):
     """
     Create a simple dataloader for predictions (without the complex sampling).
     
@@ -417,7 +447,7 @@ def create_prediction_dataloader(df: pd.DataFrame, split: str, batch_size: int):
         df_split = df.reset_index(drop = True)
     
     # Create dataset
-    dataset = PredictionDataset(df_split)
+    dataset = PredictionDataset(df_split, task_prompt_mode=task_prompt_mode)
     
     # Simple sequential dataloader
     dataloader = DataLoader(
@@ -434,19 +464,30 @@ def create_prediction_dataloader(df: pd.DataFrame, split: str, batch_size: int):
 class PredictionDataset(torch.utils.data.Dataset):
     """Simple dataset for prediction that includes all necessary fields."""
     
-    def __init__(self, df: pd.DataFrame):
+    def __init__(self, df: pd.DataFrame, task_prompt_mode: str = 'released'):
         self.df = df
         self.eeg = df['eeg'].tolist()
         self.mask = df['mask'].tolist()
         
         # Prompts
         raw_t_keys = df['task'].tolist()
-        t_prompts = ['<NR>' if t_key != 'task3' else '<TSR>' for t_key in raw_t_keys]    # note that we only have these two types of prompts [following datamodule.py]
+        if task_prompt_mode == 'canonical':
+            mapping = {'task1': '<SR>', 'task2': '<NR>', 'task3': '<TSR>'}
+            unknown = sorted(set(raw_t_keys) - set(mapping))
+            if unknown:
+                raise ValueError(f"Unknown task keys in canonical prompt mode: {unknown}")
+            t_prompts = [mapping[key] for key in raw_t_keys]
+        elif task_prompt_mode == 'released':
+            t_prompts = ['<NR>' if t_key != 'task3' else '<TSR>' for t_key in raw_t_keys]
+        else:
+            raise ValueError(f"Unknown task_prompt_mode: {task_prompt_mode}")
         d_prompts = df['dataset'].tolist()
         s_prompts = df['subject'].tolist()
         self.prompts = list(zip(t_prompts, d_prompts, s_prompts))   # now in tuple format
         
         self.text_uids = df['text uid'].tolist()
+        self.sample_ids = df['sample_id'].tolist()
+        self.source_dataframe_row_indices = df['source_dataframe_row_index'].tolist()
         
         # Ground truth labels (if available)
         self.sentiment_labels = df['sentiment label'].tolist() if 'sentiment label' in df.columns else [None] * len(df)
@@ -467,6 +508,8 @@ class PredictionDataset(torch.utils.data.Dataset):
             'mask': torch.from_numpy(self.mask[idx]),
             'prompt': self.prompts[idx],
             'text uid': self.text_uids[idx],
+            'sample_id': self.sample_ids[idx],
+            'source_dataframe_row_index': self.source_dataframe_row_indices[idx],
             'sentiment label': self.sentiment_labels[idx],
             'topic_label': self.topic_labels[idx],
             'length': self.length_values[idx],
@@ -484,6 +527,8 @@ def prediction_collate_fn(batch):
         'mask': torch.stack([item['mask'] for item in batch]),
         'prompt': [item['prompt'] for item in batch],
         'text uid': [item['text uid'] for item in batch],
+        'sample_id': [item['sample_id'] for item in batch],
+        'source_dataframe_row_index': [item['source_dataframe_row_index'] for item in batch],
         'sentiment label': [item['sentiment label'] for item in batch],
         'topic_label': [item['topic_label'] for item in batch],
         'length': [item['length'] for item in batch],
@@ -525,6 +570,7 @@ def main():
     # Load data
     print(f"Loading data from: {args.data_path}")
     df = pd.read_pickle(args.data_path)
+    df = ensure_stable_sample_ids(df)
     print(f"Total samples: {len(df)}")
     
     # Apply ZuCo1 filter if specified
@@ -538,12 +584,16 @@ def main():
             raise ValueError("No samples remaining after ZuCo1 filter. Check your data.")
     
     # Create dataloader
-    dataloader, df_split = create_prediction_dataloader(df, args.split, args.batch_size)
+    dataloader, df_split = create_prediction_dataloader(
+        df, args.split, args.batch_size, task_prompt_mode=args.task_prompt_mode
+    )
     print(f"Samples in '{args.split}' split: {len(df_split)}")
     
     # Initialize results DataFrame with metadata
     # copy Ground Truth / phase / text_uid / task / dataset ... information
     results = pd.DataFrame({
+        'sample_id': df_split['sample_id'].tolist(),
+        'source_dataframe_row_index': df_split['source_dataframe_row_index'].tolist(),
         'text uid': df_split['text uid'].tolist(),
         'task': df_split['task'].tolist(),
         'dataset': df_split['dataset'].tolist(),

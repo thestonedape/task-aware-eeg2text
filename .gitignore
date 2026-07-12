@@ -27,10 +27,12 @@ build/
 # Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb
+!kaggle/*.ipynb
 
 # Environments
 .env
 .venv
+.venv-smoke/
 env/
 venv/
 ENV/

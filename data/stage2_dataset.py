@@ -105,6 +105,13 @@ class Stage2ReconstructionDataset(Dataset):
         self.tasks = df['task'].tolist() if 'task' in df.columns else ['unknown'] * len(df)
         self.datasets = df['dataset'].tolist() if 'dataset' in df.columns else ['unknown'] * len(df)
         self.subjects = df['subject'].tolist() if 'subject' in df.columns else ['unknown'] * len(df)
+        if 'sample_id' not in df.columns or df['sample_id'].isna().any() or not df['sample_id'].is_unique:
+            raise ValueError("Stage 2 input requires a non-null unique sample_id from the packing stage")
+        self.sample_ids = df['sample_id'].astype(str).tolist()
+        self.source_dataframe_row_indices = (
+            df['source_dataframe_row_index'].tolist()
+            if 'source_dataframe_row_index' in df.columns else [None] * len(df)
+        )
         
         print(f"Stage2Dataset initialized with {len(self.df)} samples")
         print(f"  Using sentiment column: {self.sentiment_col}")
@@ -194,6 +201,8 @@ class Stage2ReconstructionDataset(Dataset):
         surprisal = self.surprisal[idx]
         
         return {
+            'sample_id': self.sample_ids[idx],
+            'source_dataframe_row_index': self.source_dataframe_row_indices[idx],
             'label_task1': label_task1,
             'label_task2': label_task2,
             'length': length,
@@ -220,6 +229,8 @@ def stage2_collate_fn(batch: List[Dict]) -> Dict:
         Batched dictionary with tensors
     """
     return {
+        'sample_id': [item['sample_id'] for item in batch],
+        'source_dataframe_row_index': [item['source_dataframe_row_index'] for item in batch],
         'label_task1': torch.tensor([item['label_task1'] for item in batch], dtype=torch.long),
         'label_task2': torch.tensor([item['label_task2'] for item in batch], dtype=torch.long),
         'length': torch.tensor([item['length'] for item in batch], dtype=torch.float),

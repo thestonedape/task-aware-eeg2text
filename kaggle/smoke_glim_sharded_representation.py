@@ -39,6 +39,7 @@ def main() -> None:
     parser.add_argument(
         "--prompt-mode", choices=("released", "canonical", "task_masked"), default="canonical"
     )
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
     if not args.checkpoint.is_file():
@@ -49,8 +50,8 @@ def main() -> None:
     dataset = ShardedZuCoDataset(
         args.dataset_root,
         args.phase,
-        classification_label_keys=["sentiment label", "topic_label"],
-        regression_label_keys=["length", "surprisal"],
+        classification_label_keys=["sr_sentiment_3", "nr_relation_content", "tsr_instruction_relation"],
+        regression_label_keys=["length_words_whitespace_v1"],
         task_prompt_mode="canonical",
     )
     try:
@@ -89,7 +90,10 @@ def main() -> None:
             "checkpoint_sha256": sha256(args.checkpoint),
             "glim_root": str(glim_root),
         }
-        print(json.dumps(report, indent=2))
+        payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
+        if args.output:
+            args.output.write_text(payload, encoding="utf-8")
+        print(payload, end="")
     finally:
         dataset.close()
 

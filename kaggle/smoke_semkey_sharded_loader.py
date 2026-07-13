@@ -19,12 +19,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path, required=True)
     parser.add_argument("--phase", choices=("train", "val", "test"), default="val")
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     dataset = ShardedZuCoDataset(
         args.dataset_root,
         args.phase,
-        classification_label_keys=["sentiment label", "topic_label"],
-        regression_label_keys=["length", "surprisal"],
+        classification_label_keys=["sr_sentiment_3", "nr_relation_content", "tsr_instruction_relation"],
+        regression_label_keys=["length_words_whitespace_v1"],
         task_prompt_mode="canonical",
     )
     try:
@@ -37,10 +38,20 @@ def main() -> None:
             "prompt": list(item["prompt"]),
             "eeg_shape": list(item["eeg"].shape),
             "mask_shape": list(item["mask"].shape),
+            "reading_task": item["reading_task"],
+            "cohort": item["cohort"],
+            "canonical_masks": {
+                key: item[key] for key in (
+                    "mask_sr_sentiment_3", "mask_nr_relation_content", "mask_tsr_instruction_relation"
+                )
+            },
         }
     finally:
         dataset.close()
-    print(json.dumps(report, indent=2, sort_keys=True))
+    payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        args.output.write_text(payload, encoding="utf-8")
+    print(payload, end="")
 
 
 if __name__ == "__main__":

@@ -13,8 +13,14 @@ import numpy as np
 
 REQUIRED_INDEX_FIELDS = {
     "source_dataframe_row_index", "sample_id", "shard", "offset", "dataset", "task",
-    "subject", "phase", "text_uid", "input text", "sentiment label", "topic_label",
-    "length", "surprisal", "lexical simplification (v0)", "lexical simplification (v1)",
+    "subject", "phase", "text_uid", "input text", "raw text", "raw label", "control",
+    "label id", "sentiment label", "relation label",
+    "dataset_version", "reading_task", "raw_task", "subject_id", "trial_id", "split",
+    "cohort", "text", "source_dataframe_sha256", "eeg_locator", "shard_locator",
+    "sr_sentiment_3", "nr_relation_content", "tsr_instruction_relation",
+    "mask_sr_sentiment_3", "mask_nr_relation_content", "mask_tsr_instruction_relation",
+    "length_words_whitespace_v1", "oracle_policy",
+    "lexical simplification (v0)", "lexical simplification (v1)",
     "semantic clarity (v0)", "semantic clarity (v1)", "syntax simplification (v0)",
     "syntax simplification (v1)", "naive rewritten", "naive simplified",
 }
@@ -47,6 +53,8 @@ def main() -> None:
     )
     dataset_root = manifest_path.parents[1]
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != 2:
+        raise ValueError("canonical shard schema_version 2 is required")
     index_path = dataset_root / manifest["index"]
     if sha256(index_path) != manifest["index_sha256"]:
         raise ValueError("shard index hash mismatch")
@@ -58,6 +66,15 @@ def main() -> None:
         index_rows = list(reader)
     if len(index_rows) != manifest["row_count"]:
         raise ValueError("index row count mismatch")
+    canonical_path = dataset_root / manifest["canonical_manifest"]
+    if sha256(canonical_path) != manifest["canonical_manifest_sha256"]:
+        raise ValueError("canonical full manifest hash mismatch")
+    contract_path = dataset_root / manifest["canonical_contract_report"]
+    if sha256(contract_path) != manifest["canonical_contract_report_sha256"]:
+        raise ValueError("canonical contract report hash mismatch")
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    if contract.get("status") != "pass" or int(contract.get("row_count", -1)) != len(index_rows):
+        raise ValueError("canonical contract report did not pass")
     sample_ids = [row["sample_id"] for row in index_rows]
     if any(not sample_id for sample_id in sample_ids) or len(sample_ids) != len(set(sample_ids)):
         raise ValueError("sample_id values must be non-empty and unique")
@@ -68,6 +85,10 @@ def main() -> None:
     report = {
         "status": "metadata_pass", "dataset_root": str(dataset_root),
         "rows": len(index_rows), "shards": len(manifest["shards"]),
+        "canonical_manifest_sha256": manifest["canonical_manifest_sha256"],
+        "phase_counts": contract["phase_counts"],
+        "task_counts": contract["task_counts"],
+        "semkey_generated_labels": contract["semkey_generated_labels"]["status"],
     }
     if not args.metadata_only:
         if args.batch_size != 1:

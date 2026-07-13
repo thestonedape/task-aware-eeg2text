@@ -11,6 +11,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from data.canonical_contract import CANONICAL_FIELDS
+
 
 PT_TARGET_KEYS = [
     "lexical simplification (v0)", "lexical simplification (v1)",
@@ -54,8 +56,10 @@ class ShardedZuCoDataset(Dataset):
 
         self.phase = phase
         self.rows = rows
-        self.classification_label_keys = classification_label_keys or ["topic_label"]
-        self.regression_label_keys = regression_label_keys or []
+        self.classification_label_keys = (
+            ["topic_label"] if classification_label_keys is None else classification_label_keys
+        )
+        self.regression_label_keys = [] if regression_label_keys is None else regression_label_keys
         required = {
             "sample_id", "source_dataframe_row_index", "shard", "offset", "dataset", "task",
             "subject", "text_uid", "input text", *PT_TARGET_KEYS,
@@ -76,6 +80,9 @@ class ShardedZuCoDataset(Dataset):
             "text uid": [self._text_uid(row["text_uid"]) for row in expanded],
             "sample_id": [row["sample_id"] for row in expanded],
         }
+        for key in CANONICAL_FIELDS:
+            if key in rows[0] and key not in self.data:
+                self.data[key] = [row[key] for row in expanded]
         for key in self.classification_label_keys + self.regression_label_keys:
             self.data[key] = [row[key] for row in expanded]
 
@@ -129,6 +136,15 @@ class ShardedZuCoDataset(Dataset):
             "raw input text": raw_text,
             "all target texts": tuple(row[key] for key in PT_TARGET_KEYS),
         }
+        for key in CANONICAL_FIELDS:
+            if key not in row or key in item:
+                continue
+            if key.startswith("mask_"):
+                item[key] = int(row[key])
+            elif key in {"source_dataframe_row_index", "length_words_whitespace_v1"}:
+                item[key] = int(row[key])
+            else:
+                item[key] = row[key]
         for key in self.classification_label_keys:
             item[key] = row[key]
         for key in self.regression_label_keys:

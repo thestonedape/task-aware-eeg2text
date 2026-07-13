@@ -11,14 +11,15 @@ The notebook must clone a user-controlled repository/fork containing the canonic
 Use two versions:
 
 1. **Source dataset** (initial upload only)
-   - `source/zuco_eeg_label_8variants.df`
-   - `manifests/canonical_validation_manifest.csv`
-   - `metadata/source_dataset.json`
+   - `zuco_eeg_label_8variants.df`
+   - `canonical_validation_manifest.csv`
+   - `source_checksums.json`
 2. **Derived sharded dataset** (normal training/smoke input)
    - `shards/shard_00000.npz`, ...
    - `shards/index.csv`
    - `metadata/shard_manifest.json`
-   - the canonical manifest and contract report
+   - `manifests/canonical_full_manifest.csv`
+   - `metadata/canonical_full_contract_report.json`
 
 Keep both private unless upstream redistribution terms explicitly permit publication. Git contains only code, schemas, and example manifests.
 
@@ -45,31 +46,41 @@ reads the Kaggle credential from `KAGGLE_API_TOKEN` or
 1. Clone and verify the explicit commit.
 2. Discover the attached dataset below `/kaggle/input`.
 3. Run `smoke_input.py --metadata-only`.
-4. For a source upload, run `prepare_shards.py` once and publish its `/kaggle/working` output as a new private Kaggle Dataset version.
+4. For the source upload, run canonical schema-v2 `prepare_shards.py` once and require exact agreement with the frozen 2,200-row validation manifest.
 5. Attach the derived dataset and run a real `--batch-size 1` shard smoke.
 6. Run the SemKey-compatible loader and GLIM representation adapter on the same ordered real sample ID.
 7. Run SemKey imports and scheduler/prompt/identity smokes.
-8. Only after these pass, enable baseline or pilot training.
+8. Freeze the evaluation manifests and run the feature-admission controls before any pilot training.
 
 ## Source-to-shard conversion
 
 After the private source dataset is fully processed by Kaggle, do not upload it
 again. Attach it to a high-RAM Kaggle session and run
 `convert_source_to_shards.ipynb`. The notebook verifies the frozen source and
-manifest hashes, creates row-addressable shards containing all SemKey Stage-1
-metadata, and runs both the storage smoke and the trainable shard-backed loader
-smoke. Save its output directory as a second private Kaggle dataset. Normal
+manifest hashes, creates row-addressable shards containing the complete raw and
+canonical task metadata, writes the full 22,335-row canonical manifest, and runs
+both the storage smoke and trainable shard-backed loader smoke. Save its output
+directory as a second private Kaggle dataset. Normal
 training notebooks attach that derived dataset instead of deserializing the
 14+ GB source pickle.
 
 The source pickle is over 14 GB and pandas must deserialize it as a whole. Conversion therefore belongs in a high-RAM Kaggle session, not the local desktop smoke.
+
+The frozen GLIM dataframe does **not** contain SemKey-generated binary sentiment,
+topic, or GPT-2 surprisal fields. Schema v2 deliberately leaves their availability
+masks false instead of fabricating them from native labels. Generate and version
+those text-derived compatibility targets later from the small shard index; the
+14+ GB EEG dataframe must not be deserialized again for label enrichment.
 
 ## Balanced GLIM/SemKey representation gate
 
 GLIM is the primary representation/alignment and direct-retrieval candidate;
 SemKey supplies the richer-feature-head and guided-generation interfaces. They
 are joined through project-owned adapters rather than trained as two full
-pipelines. After attaching the derived shards and an audited GLIM checkpoint,
+pipelines. Attach the official Figshare GLIM checkpoint as a private Kaggle
+input and verify SHA-256
+`25fcd31d1d6cafc9a0656c50a4916ba6ee106884b269d347284784cc0522c8ba`. After
+attaching the derived shards and checkpoint,
 run:
 
 ```powershell

@@ -1,15 +1,17 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "visibility": "private",
   "source": {
-    "dataframe": "source/zuco_eeg_label_8variants.df",
-    "canonical_manifest": "manifests/canonical_validation_manifest.csv",
+    "dataframe": "zuco_eeg_label_8variants.df",
+    "canonical_manifest": "canonical_validation_manifest.csv",
     "expected_dataframe_sha256": "2fefc942859a0af06cb2058df33c5681783e13266920d65ffe5e772b7a2fcfea",
     "expected_manifest_sha256": "659e1cdca4eab6c68fc57218b66f03194c92d61dd068f6427a4e3a53155b6cb1"
   },
   "derived": {
     "index": "shards/index.csv",
     "shard_glob": "shards/shard_*.npz",
-    "manifest": "metadata/shard_manifest.json"
+    "manifest": "metadata/shard_manifest.json",
+    "canonical_manifest": "manifests/canonical_full_manifest.csv",
+    "canonical_contract_report": "metadata/canonical_full_contract_report.json"
   }
 }

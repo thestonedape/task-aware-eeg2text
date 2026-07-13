@@ -35,6 +35,7 @@ def main() -> None:
             "phase": args.phase,
             "rows": len(dataset),
             "sample_id": item["sample_id"],
+            "source_dataframe_row_index": item["source_dataframe_row_index"],
             "prompt": list(item["prompt"]),
             "eeg_shape": list(item["eeg"].shape),
             "mask_shape": list(item["mask"].shape),

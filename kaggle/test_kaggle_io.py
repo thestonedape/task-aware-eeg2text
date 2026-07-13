@@ -11,13 +11,30 @@ import pandas as pd
 
 from data.sharded_dataset import ShardedZuCoDataset
 from data.datamodule import GLIMDataModule
-from data.canonical_contract import CANONICAL_MANIFEST_FIELDS
+from data.canonical_contract import CANONICAL_MANIFEST_FIELDS, canonical_tsr
 
 
 HERE = Path(__file__).resolve().parent
 
 
 class KaggleIOTests(unittest.TestCase):
+    def test_all_released_glim_tsr_labels_normalize(self):
+        expected = {
+            "awarding": "AWARD",
+            "education": "EDUCATION",
+            "employment": "EMPLOYER",
+            "foundation": "FOUNDER",
+            "job title": "JOB_TITLE",
+            "nationality": "NATIONALITY",
+            "political affiliation": "POLITICAL_AFFILIATION",
+            "visit": "VISITED",
+            "marriage": "WIFE",
+        }
+        self.assertEqual(
+            {label: canonical_tsr(label) for label in expected},
+            expected,
+        )
+
     def test_tiny_pickle_to_real_batch1_shard(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -17,7 +17,8 @@ RELATIONS = {
 TSR_RELATIONS = RELATIONS | {"CONTROL"}
 RELATION_NORMALIZATION = {
     "awarding": "AWARD", "award": "AWARD", "education": "EDUCATION",
-    "employment": "EMPLOYER", "employer": "EMPLOYER", "founder": "FOUNDER",
+    "employment": "EMPLOYER", "employer": "EMPLOYER", "foundation": "FOUNDER",
+    "founder": "FOUNDER",
     "job title": "JOB_TITLE", "job_title": "JOB_TITLE", "nationality": "NATIONALITY",
     "political affiliation": "POLITICAL_AFFILIATION",
     "political_affiliation": "POLITICAL_AFFILIATION", "visit": "VISITED",

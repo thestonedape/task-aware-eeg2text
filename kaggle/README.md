@@ -47,8 +47,9 @@ reads the Kaggle credential from `KAGGLE_API_TOKEN` or
 3. Run `smoke_input.py --metadata-only`.
 4. For a source upload, run `prepare_shards.py` once and publish its `/kaggle/working` output as a new private Kaggle Dataset version.
 5. Attach the derived dataset and run a real `--batch-size 1` shard smoke.
-6. Run SemKey imports and scheduler/prompt/identity smokes.
-7. Only after these pass, load a base model/checkpoint for a forward-only smoke.
+6. Run the SemKey-compatible loader and GLIM representation adapter on the same ordered real sample ID.
+7. Run SemKey imports and scheduler/prompt/identity smokes.
+8. Only after these pass, enable baseline or pilot training.
 
 ## Source-to-shard conversion
 
@@ -62,3 +63,24 @@ training notebooks attach that derived dataset instead of deserializing the
 14+ GB source pickle.
 
 The source pickle is over 14 GB and pandas must deserialize it as a whole. Conversion therefore belongs in a high-RAM Kaggle session, not the local desktop smoke.
+
+## Balanced GLIM/SemKey representation gate
+
+GLIM is the primary representation/alignment and direct-retrieval candidate;
+SemKey supplies the richer-feature-head and guided-generation interfaces. They
+are joined through project-owned adapters rather than trained as two full
+pipelines. After attaching the derived shards and an audited GLIM checkpoint,
+run:
+
+```powershell
+python kaggle/smoke_glim_sharded_representation.py `
+  --dataset-root <derived-dataset-root> `
+  --glim-root <pinned-glim-checkout> `
+  --checkpoint <glim-checkpoint> `
+  --phase val --prompt-mode canonical
+```
+
+The canonical adapter maps the released GLIM prompt as the checkpoint-compatible
+base and adds separate zero-initialized trainable SR/NR/TSR deltas. The smoke
+must report the same `sample_id` and source dataframe row as the SemKey-compatible
+loader. Similar module names across GLIM and SemKey are not checkpoint evidence.

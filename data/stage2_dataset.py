@@ -133,9 +133,7 @@ class Stage2ReconstructionDataset(Dataset):
         for key, idx in self.sentiment_to_idx.items():
             if key.lower() == label_lower:
                 return idx
-        # Default to first class if unknown
-        print(f"Warning:  Unknown sentiment label '{label}', defaulting to 0")
-        return 0
+        raise ValueError(f"Unknown sentiment label {label!r}; refusing silent class-zero fallback")
 
     def _convert_topic_to_idx(self, label: str) -> int:
         """Convert topic label string to index."""
@@ -146,9 +144,7 @@ class Stage2ReconstructionDataset(Dataset):
         for key, idx in self.topic_to_idx.items():
             if key.lower() == label_lower: 
                 return idx
-        # Default to first class if unknown
-        print(f"Warning: Unknown topic label '{label}', defaulting to 0")
-        return 0
+        raise ValueError(f"Unknown topic label {label!r}; refusing silent class-zero fallback")
 
     def __getitem__(self, idx:  int) -> Dict: 
         # Get EEG features

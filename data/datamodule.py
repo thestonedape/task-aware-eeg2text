@@ -5,6 +5,7 @@ This is the datamodule for SEMKEY stage 1 training
 """
 
 import os
+import pathlib
 import torch
 import numpy as np
 import pandas as pd
@@ -16,6 +17,7 @@ from typing import Literal, Iterator, Union
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
 
 from preprocess.signal_process.functions import spectral_whitening, robust_normalize_padded
+from data.sharded_dataset import ShardedZuCoDataset
 
 """
 WARNING: The newly added macros (below) are for separate testing
@@ -38,6 +40,10 @@ SEED = None
 # (Split size - hard coded)
 TEST_SIZE = 0.2
 VAL_SIZE = 0.1  # 10% of total data
+
+
+def whiten_and_robust_normalize(eeg: np.ndarray) -> np.ndarray:
+    return robust_normalize_padded(spectral_whitening(eeg))
 
 class GLIMDataModule(pl.LightningDataModule):
 
@@ -139,10 +145,44 @@ class GLIMDataModule(pl.LightningDataModule):
             local_rank = '0'
         print(f'[Rank {local_rank}][{self.__class__.__name__}] running `setup()`...', end='\n')
 
+        sharded_root = pathlib.Path(self.data_path)
+        if sharded_root.is_dir() and (sharded_root / 'metadata' / 'shard_manifest.json').is_file():
+            if self.seed is not None:
+                raise ValueError("sharded inputs use their frozen phase column; datasplit_seed must be omitted")
+            embeddings_dict = None
+            if self.embeddings_path is not None and os.path.exists(self.embeddings_path):
+                with open(self.embeddings_path, 'rb') as f:
+                    embeddings_dict = pickle.load(f)
+            if self.use_spectral_whitening and self.use_robust_normalize:
+                signal_transform = whiten_and_robust_normalize
+            elif self.use_spectral_whitening:
+                signal_transform = spectral_whitening
+            elif self.use_robust_normalize:
+                signal_transform = robust_normalize_padded
+            else:
+                signal_transform = None
+            common = dict(
+                dataset_root=sharded_root,
+                embeddings_dict=embeddings_dict,
+                classification_label_keys=self.classification_label_keys,
+                regression_label_keys=self.regression_label_keys,
+                task_prompt_mode=self.task_prompt_mode,
+                use_zuco1_only=self.use_zuco1_only,
+                signal_transform=signal_transform,
+            )
+            if stage == "fit":
+                self.train_set = ShardedZuCoDataset(phase='train', **common)
+                self.val_set = ShardedZuCoDataset(phase='val', **common)
+                self.n_target_text = self.val_set.n_target_text
+            elif stage == "test":
+                self.test_set = ShardedZuCoDataset(phase=self.test_set_key, **common)
+                self.n_target_text = self.test_set.n_target_text
+            print(f'[Rank {local_rank}][{self.__class__.__name__}] sharded setup...Done!')
+            return
+
         # Process Whiteing and Normalization
         # Let's cache it
         # Again BAD BAD code, but might work
-        import pathlib
         if self.use_spectral_whitening and self.use_robust_normalize:
             path = pathlib.Path(self.data_path)
             cache_path = path.with_stem(path.stem + '_whiten_norm')

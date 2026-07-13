@@ -11,6 +11,14 @@ from pathlib import Path
 import numpy as np
 
 
+REQUIRED_INDEX_FIELDS = {
+    "source_dataframe_row_index", "sample_id", "shard", "offset", "dataset", "task",
+    "subject", "phase", "text_uid", "input text", "sentiment label", "topic_label",
+    "length", "surprisal", "lexical simplification (v0)", "lexical simplification (v1)",
+    "semantic clarity (v0)", "semantic clarity (v1)", "syntax simplification (v0)",
+    "syntax simplification (v1)", "naive rewritten", "naive simplified",
+}
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -43,9 +51,20 @@ def main() -> None:
     if sha256(index_path) != manifest["index_sha256"]:
         raise ValueError("shard index hash mismatch")
     with index_path.open(encoding="utf-8", newline="") as handle:
-        index_rows = list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        missing = REQUIRED_INDEX_FIELDS - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"shard index missing trainable fields: {sorted(missing)}")
+        index_rows = list(reader)
     if len(index_rows) != manifest["row_count"]:
         raise ValueError("index row count mismatch")
+    sample_ids = [row["sample_id"] for row in index_rows]
+    if any(not sample_id for sample_id in sample_ids) or len(sample_ids) != len(set(sample_ids)):
+        raise ValueError("sample_id values must be non-empty and unique")
+    shard_rows = {item["name"]: int(item["rows"]) for item in manifest["shards"]}
+    for row in index_rows:
+        if row["shard"] not in shard_rows or not 0 <= int(row["offset"]) < shard_rows[row["shard"]]:
+            raise ValueError(f"invalid shard/offset locator for {row['sample_id']}")
     report = {
         "status": "metadata_pass", "dataset_root": str(dataset_root),
         "rows": len(index_rows), "shards": len(manifest["shards"]),
@@ -62,8 +81,11 @@ def main() -> None:
         offset = int(first["offset"])
         eeg = archive["eeg"][offset : offset + 1]
         mask = archive["mask"][offset : offset + 1]
+        source_row = int(archive["source_dataframe_row_index"][offset])
         if eeg.shape[0] != 1 or mask.shape[0] != 1 or not np.isfinite(eeg).all():
             raise ValueError("invalid real batch-1 shard payload")
+        if source_row != int(first["source_dataframe_row_index"]):
+            raise ValueError("source dataframe row mismatch between index and shard")
         report.update({
             "status": "batch1_pass", "sample_id": first["sample_id"],
             "eeg_shape": list(eeg.shape), "mask_shape": list(mask.shape),

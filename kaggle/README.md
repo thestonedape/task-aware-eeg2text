@@ -22,6 +22,19 @@ Use two versions:
 
 Keep both private unless upstream redistribution terms explicitly permit publication. Git contains only code, schemas, and example manifests.
 
+## Upload the private source dataset
+
+From the workspace root, run this in PowerShell on the faster connection:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\SemKey\kaggle\upload_source_dataset.ps1 -StopExistingUpload
+```
+
+The switch stops the previously recorded slow upload before creating a fresh
+dataset version. Omit it when no earlier upload process is running. The script
+reads the Kaggle credential from `KAGGLE_API_TOKEN` or
+`~/.kaggle/access_token`; the token is never embedded in the repository.
+
 ## Gate order
 
 1. Clone and verify the explicit commit.
@@ -31,5 +44,16 @@ Keep both private unless upstream redistribution terms explicitly permit publica
 5. Attach the derived dataset and run a real `--batch-size 1` shard smoke.
 6. Run SemKey imports and scheduler/prompt/identity smokes.
 7. Only after these pass, load a base model/checkpoint for a forward-only smoke.
+
+## Source-to-shard conversion
+
+After the private source dataset is fully processed by Kaggle, do not upload it
+again. Attach it to a high-RAM Kaggle session and run
+`convert_source_to_shards.ipynb`. The notebook verifies the frozen source and
+manifest hashes, creates row-addressable shards containing all SemKey Stage-1
+metadata, and runs both the storage smoke and the trainable shard-backed loader
+smoke. Save its output directory as a second private Kaggle dataset. Normal
+training notebooks attach that derived dataset instead of deserializing the
+14+ GB source pickle.
 
 The source pickle is over 14 GB and pandas must deserialize it as a whole. Conversion therefore belongs in a high-RAM Kaggle session, not the local desktop smoke.

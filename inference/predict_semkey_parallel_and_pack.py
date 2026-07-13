@@ -243,6 +243,15 @@ def load_model_from_checkpoint(checkpoint_path: str, device: torch.device) -> SE
     return model
 
 
+def require_matching_task_prompt_mode(model: SEMKEY_PARALLEL, requested_mode: str) -> None:
+    checkpoint_mode = getattr(model, 'task_prompt_mode', 'released')
+    if checkpoint_mode != requested_mode:
+        raise ValueError(
+            f"Task prompt mode mismatch: checkpoint uses {checkpoint_mode!r}, "
+            f"but inference requested {requested_mode!r}. Refusing to remap SR/NR silently."
+        )
+
+
 def prepare_batch_for_prediction(batch: dict, device: torch.device) -> dict:
     """
     Prepare a batch dictionary for prediction.
@@ -610,6 +619,7 @@ def main():
     if single_checkpoint_mode:
         # Single checkpoint mode: load once, predict once for all tasks
         model = load_model_from_checkpoint(args.single_checkpoint, device)
+        require_matching_task_prompt_mode(model, args.task_prompt_mode)
         
         predictions = predict_all_tasks_with_single_model(model, dataloader, device)
         
@@ -656,6 +666,7 @@ def main():
             
             # Load model
             model = load_model_from_checkpoint(checkpoint_path, device)
+            require_matching_task_prompt_mode(model, args.task_prompt_mode)
             
             # Run predictions
             predictions = predict_with_model(model, dataloader, device, task)

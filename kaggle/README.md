@@ -22,6 +22,11 @@ Use two versions:
 
 Keep both private unless upstream redistribution terms explicitly permit publication. Git contains only code, schemas, and example manifests.
 
+Because the project repository is private, add a private Kaggle Secret named
+`GITHUB_TOKEN` containing a fine-grained GitHub token with read-only Contents
+access to `thestonedape/task-aware-eeg2text`. The notebooks use `GIT_ASKPASS`;
+the token is not embedded in notebook source or printed to output.
+
 ## Upload the private source dataset
 
 From the workspace root, run this in PowerShell on the faster connection:

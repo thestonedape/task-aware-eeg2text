@@ -308,6 +308,7 @@ def chunk_base_metadata(
     source_index_sha256: str,
     gaussian_seed: int,
     train_signal_stats_sha256: str,
+    batch_size: int,
 ) -> dict[str, object]:
     return {
         "condition": condition,
@@ -321,6 +322,7 @@ def chunk_base_metadata(
         "dtype": "float32",
         "gaussian_seed": gaussian_seed,
         "train_signal_stats_sha256": train_signal_stats_sha256,
+        "batch_size": batch_size,
         "extraction_contract_version": 1,
     }
 
@@ -375,7 +377,7 @@ def extract_condition(
         meta_path = output_root / f"vectors/{condition}_{chunk_number:05d}.json"
         expected = chunk_base_metadata(
             condition, chunk_number, chunk_records, vector_dim, checkpoint_sha256,
-            source_index_sha256, gaussian_seed, str(train_signal_stats_sha256)
+            source_index_sha256, gaussian_seed, str(train_signal_stats_sha256), batch_size
         )
         was_reused = valid_existing_chunk(npz_path, meta_path, expected)
         if was_reused:
@@ -541,6 +543,8 @@ def run_extraction(
         "vector_dim": vector_dim,
         "dtype": "float32",
         "gaussian_seed": gaussian_seed,
+        "batch_size": batch_size,
+        "chunk_size": chunk_size,
         "gaussian_stats": stats_metadata,
         "wrong_eeg_donor_sha256": donor_sha,
         "condition_counts": condition_counts,

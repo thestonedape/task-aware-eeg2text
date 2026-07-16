@@ -14,7 +14,7 @@ import importlib
 from pathlib import Path
 import sys
 import types
-from typing import Literal
+from typing import Any, Dict, Literal
 
 import torch
 from torch import nn
@@ -38,7 +38,21 @@ def load_upstream_glim_class(glim_root: str | Path):
         sys.modules[package_name] = package
     elif list(package.__path__) != [str(model_root)]:
         raise RuntimeError("a different GLIM source root is already loaded in this process")
-    return importlib.import_module(f"{package_name}.glim").GLIM
+    # The public GLIM commit annotates one hook with torch.Dict/torch.Any,
+    # which are not PyTorch attributes and make the released module fail at
+    # import time. Supply the intended typing aliases only while importing;
+    # this leaves the upstream checkout unchanged and does not alter weights.
+    temporary_torch_aliases = {"Dict": Dict, "Any": Any}
+    added_aliases = []
+    for name, value in temporary_torch_aliases.items():
+        if not hasattr(torch, name):
+            setattr(torch, name, value)
+            added_aliases.append(name)
+    try:
+        return importlib.import_module(f"{package_name}.glim").GLIM
+    finally:
+        for name in added_aliases:
+            delattr(torch, name)
 
 
 def _prompt_columns(prompts) -> tuple[list[str], list[str], list[str]]:

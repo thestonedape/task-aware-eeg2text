@@ -57,6 +57,27 @@ class CanonicalGLIMRepresentationTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 load_upstream_glim_class(Path(directory))
 
+    def test_upstream_loader_scopes_released_torch_typing_workaround(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model_root = Path(directory) / "model"
+            model_root.mkdir()
+            (model_root / "modules.py").write_text("", encoding="utf-8")
+            (model_root / "glim.py").write_text(
+                "import torch\n"
+                "class GLIM:\n"
+                "    def on_save_checkpoint(self, checkpoint: torch.Dict[str, torch.Any]) -> None:\n"
+                "        pass\n",
+                encoding="utf-8",
+            )
+            had_dict = hasattr(torch, "Dict")
+            had_any = hasattr(torch, "Any")
+            loaded = load_upstream_glim_class(Path(directory))
+            self.assertEqual(loaded.__name__, "GLIM")
+            if not had_dict:
+                self.assertFalse(hasattr(torch, "Dict"))
+            if not had_any:
+                self.assertFalse(hasattr(torch, "Any"))
+
     def test_released_base_is_preserved_and_tasks_have_distinct_ids(self):
         adapter = CanonicalGLIMRepresentationAdapter(DummyGLIM())
         sr_base, sr_id = adapter.prompt_embedding(("<SR>", "ZuCo1", "S1"), "canonical")

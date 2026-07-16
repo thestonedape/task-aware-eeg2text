@@ -61,7 +61,8 @@ Write-Host "Uploading private dataset $DatasetSlug"
 if ($VersionExisting) {
     & $kaggleExe datasets version --path $stagePath --message "verified GLIM ZuCo checkpoint"
 } else {
-    & $kaggleExe datasets create --path $stagePath --private
+    # Current Kaggle CLI creates datasets privately by default; --public is opt-in.
+    & $kaggleExe datasets create --path $stagePath
 }
 
 if ($LASTEXITCODE -ne 0) {
@@ -69,3 +70,4 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Upload completed: https://www.kaggle.com/datasets/$DatasetSlug"
+Write-Host "Kaggle may sanitize '=' characters from the mounted filename; consumers must verify SHA-256."

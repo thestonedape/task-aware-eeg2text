@@ -1,5 +1,6 @@
 import csv
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -79,6 +80,15 @@ class KaggleIOTests(unittest.TestCase):
             self.assertEqual(report["semkey_generated_labels"], "not_fabricated")
             self.assertEqual(report["eeg_shape"], [1, 8, 4])
             self.assertEqual(report["sample_id"], "ZuCo1::task1::S1::row000000")
+            nested_input = root / "kaggle_input" / "datasets" / "owner" / "derived"
+            shutil.copytree(output, nested_input)
+            nested_result = subprocess.run([
+                sys.executable, str(HERE / "smoke_input.py"),
+                "--input-root", str(root / "kaggle_input"), "--batch-size", "1",
+            ], check=True, capture_output=True, text=True)
+            nested_report = json.loads(nested_result.stdout)
+            self.assertEqual(nested_report["status"], "batch1_pass")
+            self.assertEqual(nested_report["sample_id"], report["sample_id"])
             manifest = json.loads((output / "metadata" / "shard_manifest.json").read_text())
             self.assertEqual(manifest["schema_version"], 2)
             with (output / "manifests" / "canonical_full_manifest.csv").open(

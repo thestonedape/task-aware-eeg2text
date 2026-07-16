@@ -34,9 +34,11 @@ def sha256(path: Path) -> str:
 
 
 def discover(root: Path, relative: str) -> Path:
-    matches = sorted(root.glob(f"*/{relative}"))
+    matches = sorted(path for path in root.glob(f"**/{relative}") if path.is_file())
     if len(matches) != 1:
-        raise FileNotFoundError(f"expected exactly one */{relative} below {root}, found {matches}")
+        raise FileNotFoundError(
+            f"expected exactly one recursive {relative} below {root}, found {matches}"
+        )
     return matches[0]
 
 

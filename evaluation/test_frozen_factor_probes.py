@@ -69,7 +69,9 @@ def write_vector_fixture(root: Path, protocol_root: Path) -> None:
         vectors = np.stack(values)
         np.savez(path, vectors=vectors)
         chunks.append({
-            "condition": condition, "chunk_number": 0, "vector_file": relative,
+            # Match the frozen schema-v1 extractor: the concrete vector path is
+            # carried by vector_index.csv, not repeated in each chunk entry.
+            "condition": condition, "chunk_number": 0,
             "vector_npz_sha256": sha256(path),
         })
         for offset, row in enumerate(rows):

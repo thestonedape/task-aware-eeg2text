@@ -129,10 +129,28 @@ class VectorStore:
             if key in self.lookup:
                 raise ValueError(f"duplicate vector identity: {key}")
             self.lookup[key] = row
-        self.chunk_hashes = {
-            str(item["vector_file"]): str(item["vector_npz_sha256"])
-            for item in self.manifest["chunks"]
-        }
+        self.chunk_hashes: dict[str, str] = {}
+        for item in self.manifest["chunks"]:
+            # Schema v1 extraction manifests identify chunks by condition and
+            # chunk_number; vector_index.csv carries the concrete vector_file.
+            # Accept a future explicit path while remaining compatible with the
+            # already-frozen schema-v1 artifact.
+            relative = item.get("vector_file")
+            if relative is None:
+                condition = item.get("condition")
+                chunk_number = item.get("chunk_number")
+                if not isinstance(condition, str) or not condition:
+                    raise ValueError(f"invalid vector chunk condition: {condition!r}")
+                if isinstance(chunk_number, bool) or not isinstance(chunk_number, int):
+                    raise ValueError(f"invalid vector chunk number: {chunk_number!r}")
+                relative = f"vectors/{condition}_{chunk_number:05d}.npz"
+            relative = str(relative)
+            if relative in self.chunk_hashes:
+                raise ValueError(f"duplicate vector chunk manifest entry: {relative}")
+            self.chunk_hashes[relative] = str(item["vector_npz_sha256"])
+        indexed_files = {row["vector_file"] for row in self.rows}
+        if indexed_files != set(self.chunk_hashes):
+            raise ValueError("vector index and chunk manifest file sets differ")
         self.cache: dict[str, np.ndarray] = {}
 
     def _chunk(self, relative: str) -> np.ndarray:

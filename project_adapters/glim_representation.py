@@ -22,6 +22,7 @@ from torch import nn
 
 CANONICAL_TASKS = ("<SR>", "<NR>", "<TSR>")
 RELEASED_TASK = {"<SR>": "<NR>", "<NR>": "<NR>", "<TSR>": "<TSR>"}
+PromptMode = Literal["released", "canonical", "task_masked", "all_masked"]
 
 
 def load_upstream_glim_class(glim_root: str | Path):
@@ -80,7 +81,7 @@ class CanonicalGLIMRepresentationAdapter(nn.Module):
     def prompt_embedding(
         self,
         prompts,
-        mode: Literal["released", "canonical", "task_masked"] = "canonical",
+        mode: PromptMode = "canonical",
         device: torch.device | str | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         task, dataset, subject = _prompt_columns(prompts)
@@ -91,13 +92,16 @@ class CanonicalGLIMRepresentationAdapter(nn.Module):
             [CANONICAL_TASKS.index(value) for value in task], dtype=torch.long, device=device
         )
 
-        if mode == "task_masked":
+        if mode in {"task_masked", "all_masked"}:
             released_task = ["<UNK>"] * len(task)
         elif mode in {"released", "canonical"}:
             released_task = [RELEASED_TASK[value] for value in task]
         else:
             raise ValueError(f"unknown prompt mode: {mode}")
 
+        if mode == "all_masked":
+            dataset = ["<UNK>"] * len(dataset)
+            subject = ["<UNK>"] * len(subject)
         released_prompts = (released_task, dataset, subject)
         prompt_ids = self.glim_model.p_embedder.encode(released_prompts, device=device)
         base = self.glim_model.p_embedder(prompt_ids, self.glim_model.eval_pembed)
@@ -112,7 +116,7 @@ class CanonicalGLIMRepresentationAdapter(nn.Module):
         prompts,
         sample_ids: Sequence[str] | None = None,
         source_dataframe_row_indices: Sequence[int] | None = None,
-        mode: Literal["released", "canonical", "task_masked"] = "canonical",
+        mode: PromptMode = "canonical",
     ) -> dict:
         if eeg.ndim == 2:
             eeg = eeg.unsqueeze(0)

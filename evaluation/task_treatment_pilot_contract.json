@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "status": "frozen_before_pilot_training",
+  "paper_role": "bounded task-treatment selection; no richer-factor loss",
+  "inputs": {
+    "canonical_index_sha256": "bdaaaf5c91d3c9eec16a0727825da996fd2186867245951bfdfdc92aab7738b0",
+    "glim_checkpoint_sha256": "25fcd31d1d6cafc9a0656c50a4916ba6ee106884b269d347284784cc0522c8ba",
+    "glim_commit": "e1f202cb793cfe7292fbc0072a4c26a7dd0660d9",
+    "representation": "released GLIM 1024-D global EEG vector",
+    "representation_prompt_mode": "all_masked",
+    "masked_prompt_fields": ["task", "dataset", "subject"],
+    "text_target": "frozen released-GLIM aligned text vector",
+    "backbone_trainable": false
+  },
+  "cohorts": {
+    "fit": ["primary_zuco2_nr_tsr", "auxiliary_sr"],
+    "excluded_from_fit": ["zuco1_nr_tsr_noncausal"],
+    "headline_validation": "primary_zuco2_nr_tsr",
+    "auxiliary_validation": ["auxiliary_sr"],
+    "aggregate": "macro-average NR and TSR after task-specific reporting",
+    "causal_cross_task_claims": false
+  },
+  "configurations": [
+    {
+      "id": "generic_pooled",
+      "task_input": "none",
+      "adapter": "one shared bias-free residual bottleneck",
+      "shared_rank": 96,
+      "private_rank_per_task": 0,
+      "trainable_parameters_at_1024d": 196608
+    },
+    {
+      "id": "separate_per_task",
+      "task_input": "hard routing",
+      "adapter": "three independent task-private residual bottlenecks; no shared trainable adapter",
+      "shared_rank": 0,
+      "private_rank_per_task": 32,
+      "trainable_parameters_at_1024d": 196608
+    },
+    {
+      "id": "task_token",
+      "task_input": "canonical three-way one-hot concatenated only at the adapter bottleneck",
+      "adapter": "one shared task-token residual bottleneck",
+      "shared_rank": 96,
+      "private_rank_per_task": 0,
+      "trainable_parameters_at_1024d": 196896
+    },
+    {
+      "id": "masked_shared_private",
+      "task_input": "hard routing of task-private residual; shared residual always active",
+      "adapter": "one shared plus three hard-masked task-private residual bottlenecks",
+      "shared_rank": 48,
+      "private_rank_per_task": 16,
+      "trainable_parameters_at_1024d": 196608
+    }
+  ],
+  "parameter_control": {
+    "reference_parameters": 196608,
+    "maximum_relative_deviation": 0.00146484375,
+    "maximum_allowed_relative_deviation": 0.002,
+    "common_frozen_backbone_parameters_excluded_equally": true
+  },
+  "training": {
+    "objective": "symmetric in-batch cosine contrastive alignment",
+    "batch_task_policy": "task-homogeneous batches on an identical frozen task schedule for all configurations",
+    "duplicate_text_policy": "no normalized text identity may appear twice in one batch",
+    "batch_size": 256,
+    "optimizer": "AdamW",
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 40,
+    "gradient_clip_norm": 1.0,
+    "seeds": [20260717, 20260718, 20260719],
+    "validation_checkpoint_rule": "highest macro NR/TSR MRR; earliest epoch breaks ties",
+    "auxiliary_factor_losses": []
+  },
+  "task_controls": {
+    "correct": "declared canonical task",
+    "masked_generic": "unchanged because generic receives no task",
+    "masked_separate": "mean prediction across all three private adapters",
+    "masked_task_token": "zero three-way token",
+    "masked_shared_private": "shared adapter only",
+    "shuffled": "fixed cyclic map SR->NR, NR->TSR, TSR->SR"
+  },
+  "evaluation": {
+    "candidate_pool": "frozen 24-way same-dataset/task length-controlled pool",
+    "primary_metrics": ["top1", "top5", "mrr", "positive_rank", "positive_minus_best_negative_margin"],
+    "signal_conditions": ["correct", "zero", "gaussian", "matched_wrong"],
+    "required_signal_gap": "correct-minus-matched-wrong must not decrease",
+    "held_out_test_accessed": false
+  },
+  "continuation_rule": {
+    "task_aware_winner": "masked_shared_private must improve primary macro MRR over both generic_pooled and task_token with positive paired clustered lower bound and non-decreasing signal gap",
+    "richer_stage": "only the winning masked_shared_private model may add the admitted TSR instruction-relation head",
+    "prohibited_factors": ["length_words_whitespace_v1", "nr_relation_content", "sr_sentiment_3"]
+  }
+}

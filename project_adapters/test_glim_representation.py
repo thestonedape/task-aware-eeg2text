@@ -90,6 +90,14 @@ class CanonicalGLIMRepresentationTests(unittest.TestCase):
         sr_tuned, _ = adapter.prompt_embedding(("<SR>", "ZuCo1", "S1"), "canonical")
         self.assertFalse(torch.equal(sr_tuned, nr_base))
 
+    def test_all_masked_removes_task_dataset_and_subject_prompt_information(self):
+        adapter = CanonicalGLIMRepresentationAdapter(DummyGLIM())
+        first, first_id = adapter.prompt_embedding(("<SR>", "ZuCo1", "S1"), "all_masked")
+        second, second_id = adapter.prompt_embedding(("<TSR>", "ZuCo2", "S2"), "all_masked")
+        self.assertTrue(torch.equal(first, second))
+        self.assertEqual(int(first_id[0]), 0)
+        self.assertEqual(int(second_id[0]), 2)
+
     def test_identity_safe_representation_output(self):
         adapter = CanonicalGLIMRepresentationAdapter(DummyGLIM())
         output = adapter(

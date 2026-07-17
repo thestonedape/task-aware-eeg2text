@@ -309,6 +309,7 @@ def chunk_base_metadata(
     gaussian_seed: int,
     train_signal_stats_sha256: str,
     batch_size: int,
+    prompt_mode: str,
 ) -> dict[str, object]:
     return {
         "condition": condition,
@@ -318,7 +319,7 @@ def chunk_base_metadata(
         "identity_sha256": identity_sha256(records),
         "checkpoint_sha256": checkpoint_sha256,
         "source_index_sha256": source_index_sha256,
-        "prompt_mode": "canonical",
+        "prompt_mode": prompt_mode,
         "dtype": "float32",
         "gaussian_seed": gaussian_seed,
         "train_signal_stats_sha256": train_signal_stats_sha256,
@@ -362,6 +363,7 @@ def extract_condition(
     checkpoint_sha256: str,
     source_index_sha256: str,
     train_signal_stats_sha256: str,
+    prompt_mode: str,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], int]:
     vector_dir = output_root / "vectors"
     vector_dir.mkdir(parents=True, exist_ok=True)
@@ -377,7 +379,8 @@ def extract_condition(
         meta_path = output_root / f"vectors/{condition}_{chunk_number:05d}.json"
         expected = chunk_base_metadata(
             condition, chunk_number, chunk_records, vector_dim, checkpoint_sha256,
-            source_index_sha256, gaussian_seed, str(train_signal_stats_sha256), batch_size
+            source_index_sha256, gaussian_seed, str(train_signal_stats_sha256), batch_size,
+            prompt_mode,
         )
         was_reused = valid_existing_chunk(npz_path, meta_path, expected)
         if was_reused:
@@ -451,7 +454,7 @@ def extract_condition(
                     "vector_file": relative_npz,
                     "vector_offset": offset,
                     "vector_dim": vector_dim,
-                    "prompt_mode": "canonical",
+                    "prompt_mode": prompt_mode,
                     "checkpoint_sha256": checkpoint_sha256,
                     "source_index_sha256": source_index_sha256,
                 }
@@ -473,9 +476,12 @@ def run_extraction(
     gaussian_seed: int = 20260716,
     smoke_limit: int | None = None,
     expected_signal_shape: tuple[int, int] | None = (1280, 128),
+    prompt_mode: str = "canonical",
 ) -> dict[str, object]:
     if batch_size <= 0 or chunk_size <= 0 or chunk_size < batch_size:
         raise ValueError("batch_size and chunk_size must be positive; chunk_size >= batch_size")
+    if prompt_mode not in {"canonical", "all_masked"}:
+        raise ValueError("vector extraction prompt_mode must be canonical or all_masked")
     output_root.mkdir(parents=True, exist_ok=True)
     train, validation, source_manifest = load_development_rows(dataset_root, expected_index_sha256)
     donor_map, donor_sha = freeze_donors(validation, output_root, expected_donor_sha256)
@@ -510,6 +516,7 @@ def run_extraction(
                 checkpoint_sha256=checkpoint_sha256,
                 source_index_sha256=str(source_manifest["index_sha256"]),
                 train_signal_stats_sha256=str(stats_metadata["stats_npz_sha256"]),
+                prompt_mode=prompt_mode,
             )
             all_index_rows.extend(index_rows)
             all_chunks.extend(chunks)
@@ -539,7 +546,7 @@ def run_extraction(
         "source_dataframe_sha256": source_manifest.get("source_dataframe_sha256", ""),
         "checkpoint_sha256": checkpoint_sha256,
         "glim_commit": glim_commit,
-        "prompt_mode": "canonical",
+        "prompt_mode": prompt_mode,
         "vector_dim": vector_dim,
         "dtype": "float32",
         "gaussian_seed": gaussian_seed,
@@ -581,7 +588,7 @@ def run_extraction(
 
 
 class GLIMVectorEmbedder:
-    def __init__(self, glim_root: Path, checkpoint: Path, device: str):
+    def __init__(self, glim_root: Path, checkpoint: Path, device: str, prompt_mode: str = "canonical"):
         import torch
         from project_adapters.glim_representation import (
             CanonicalGLIMRepresentationAdapter,
@@ -605,6 +612,9 @@ class GLIMVectorEmbedder:
         model.eval().to(self.device)
         self.adapter = CanonicalGLIMRepresentationAdapter(model).eval().to(self.device)
         self.vector_dim = 1024
+        if prompt_mode not in {"canonical", "all_masked"}:
+            raise ValueError("prompt_mode must be canonical or all_masked")
+        self.prompt_mode = prompt_mode
 
     def __call__(
         self,
@@ -622,7 +632,7 @@ class GLIMVectorEmbedder:
                 prompts,
                 sample_ids=sample_ids,
                 source_dataframe_row_indices=source_rows,
-                mode="canonical",
+                mode=self.prompt_mode,
             )
             if output["sample_id"] != sample_ids or output["source_dataframe_row_index"] != source_rows:
                 raise ValueError("GLIM adapter changed batch identities")
@@ -645,11 +655,14 @@ def main() -> None:
     parser.add_argument("--chunk-size", type=int, default=128)
     parser.add_argument("--gaussian-seed", type=int, default=20260716)
     parser.add_argument("--smoke-limit", type=int)
+    parser.add_argument("--prompt-mode", choices=("canonical", "all_masked"), default="canonical")
     args = parser.parse_args()
     checkpoint_sha = sha256(args.checkpoint)
     if checkpoint_sha != args.expected_checkpoint_sha256:
         raise ValueError("GLIM checkpoint SHA256 mismatch")
-    embedder = GLIMVectorEmbedder(args.glim_root, args.checkpoint, args.device)
+    embedder = GLIMVectorEmbedder(
+        args.glim_root, args.checkpoint, args.device, prompt_mode=args.prompt_mode
+    )
     report = run_extraction(
         dataset_root=args.dataset_root,
         output_root=args.output_root,
@@ -663,6 +676,7 @@ def main() -> None:
         chunk_size=args.chunk_size,
         gaussian_seed=args.gaussian_seed,
         smoke_limit=args.smoke_limit,
+        prompt_mode=args.prompt_mode,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
 

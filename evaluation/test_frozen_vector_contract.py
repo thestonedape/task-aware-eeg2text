@@ -135,6 +135,7 @@ def main() -> None:
             batch_size=2,
             chunk_size=2,
             expected_signal_shape=None,
+            prompt_mode="all_masked",
         )
         first = run_extraction(output_root=output, **common)
         before = tree_hashes(output)
@@ -153,9 +154,11 @@ def main() -> None:
             index = list(csv.DictReader(handle))
         assert len(index) == 20
         assert all(row["phase"] != "test" for row in index)
+        assert {row["prompt_mode"] for row in index} == {"all_masked"}
         wrong = [row for row in index if row["condition"] == "matched_wrong_val"]
         assert all(row["target_trial_id"] != row["signal_trial_id"] for row in wrong)
         manifest = json.loads((output / "vector_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["prompt_mode"] == "all_masked"
         assert manifest["checks"]["held_out_test_accessed"] is False
         assert manifest["gaussian_stats"]["training_rows"] == 4
 

@@ -5,6 +5,7 @@ import torch
 from project_adapters.task_treatment_pilots import (
     CONFIG_IDS,
     TaskTreatmentPilot,
+    active_parameter_budget,
     parameter_budget,
     symmetric_alignment_loss,
 )
@@ -18,6 +19,14 @@ class TaskTreatmentPilotTests(unittest.TestCase):
         self.assertEqual(report["masked_shared_private"], 196608)
         self.assertEqual(report["task_token"], 196896)
         self.assertLessEqual(report["maximum_relative_deviation"], 0.002)
+
+    def test_active_per_example_capacity_is_reported_separately(self):
+        self.assertEqual(active_parameter_budget(), {
+            "generic_pooled": 196608,
+            "separate_per_task": 65536,
+            "task_token": 196896,
+            "masked_shared_private": 131072,
+        })
 
     def test_all_configurations_start_as_identity(self):
         vectors = torch.randn(6, 16)
@@ -47,6 +56,14 @@ class TaskTreatmentPilotTests(unittest.TestCase):
         self.assertTrue(torch.equal(masked, vectors))
         self.assertFalse(torch.equal(model(vectors, tasks, "correct"), masked))
 
+    def test_hard_routing_does_not_touch_inactive_private_adapters(self):
+        model = TaskTreatmentPilot("separate_per_task", vector_dim=8)
+        output = model(torch.randn(4, 8), ["NR"] * 4, "correct")
+        output.sum().backward()
+        self.assertTrue(all(parameter.grad is None for parameter in model.private[0].parameters()))
+        self.assertTrue(all(parameter.grad is not None for parameter in model.private[1].parameters()))
+        self.assertTrue(all(parameter.grad is None for parameter in model.private[2].parameters()))
+
     def test_alignment_loss_is_finite_and_backpropagates(self):
         eeg = torch.randn(4, 8, requires_grad=True)
         text = torch.randn(4, 8)
@@ -58,4 +75,3 @@ class TaskTreatmentPilotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

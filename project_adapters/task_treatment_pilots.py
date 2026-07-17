@@ -113,8 +113,11 @@ class TaskTreatmentPilot(nn.Module):
     def _private_delta(self, vector: torch.Tensor, task_ids: torch.Tensor) -> torch.Tensor:
         delta = torch.zeros_like(vector)
         for task_id, adapter in enumerate(self.private):
-            mask = (task_ids == task_id).to(dtype=vector.dtype).unsqueeze(1)
-            delta = delta + adapter.delta(vector) * mask
+            indices = torch.nonzero(task_ids == task_id, as_tuple=False).flatten()
+            if indices.numel() == 0:
+                continue
+            selected = adapter.delta(vector.index_select(0, indices))
+            delta = delta.index_copy(0, indices, selected)
         return delta
 
     def forward(
@@ -159,6 +162,18 @@ class TaskTreatmentPilot(nn.Module):
     def trainable_parameter_count(self) -> int:
         return sum(parameter.numel() for parameter in self.parameters() if parameter.requires_grad)
 
+    @property
+    def active_parameter_count_per_example(self) -> int:
+        shared = (
+            sum(parameter.numel() for parameter in self.shared.parameters())
+            if self.shared is not None else 0
+        )
+        private = (
+            sum(parameter.numel() for parameter in self.private[0].parameters())
+            if self.private else 0
+        )
+        return shared + private
+
 
 def symmetric_alignment_loss(eeg_vectors: torch.Tensor, text_vectors: torch.Tensor) -> torch.Tensor:
     """GLIM-compatible symmetric in-batch cosine contrastive loss."""
@@ -180,3 +195,11 @@ def parameter_budget(vector_dim: int = 1024) -> dict[str, int | float]:
     maximum_relative_deviation = max(abs(count - reference) / reference for count in counts.values())
     return {**counts, "reference": reference, "maximum_relative_deviation": maximum_relative_deviation}
 
+
+def active_parameter_budget(vector_dim: int = 1024) -> dict[str, int]:
+    return {
+        config_id: TaskTreatmentPilot(
+            config_id, vector_dim
+        ).active_parameter_count_per_example
+        for config_id in CONFIG_IDS
+    }

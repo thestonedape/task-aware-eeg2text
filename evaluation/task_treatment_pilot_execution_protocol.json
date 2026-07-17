@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "status": "frozen_before_pilot_execution",
+  "parent_contract_sha256": "a7370a61921803fbeaaab874dcfef77d38d6dceb35b05e249b6f5548e8a2921e",
+  "input": {
+    "preserved_source_id": "kaggle-dataset-thestonedape-task-aware-eegtotext-version-2",
+    "combined_manifest_sha256": "6c1fff8d2e89e33a72d03c39651e8ecce678c3b93cdb66747dd6dcc00538cddb",
+    "eeg_vector_index_sha256": "373e49da7d3d6d00aaae414437886033e7f2c6a938a92662f76a0973744e0ae9",
+    "text_vector_index_sha256": "5b0a9579cbc586a7eaab353cee7ba65ab538a5e9cbd333e51ccab9855bde98ae",
+    "trial_text_targets_sha256": "1cde6365bdfe523d2497cba56375d1a27d917cfab02d7d6a407564ce32ca2b21"
+  },
+  "candidate_pool": {
+    "size": 24,
+    "reconstruction": "same dataset and reading task; development-training-catalog negatives plus validation targets from the target trial's own checkpoint or decision partition only; closest whitespace-token length; seeded SHA256 tie-break and order",
+    "seed": 20260716,
+    "expected_rows": 52800,
+    "hash_freeze": "derive during the all-four real-data smoke from the verified exact input, then require that exact SHA256 as a full-run argument",
+    "model_scores_used": false,
+    "scope": "frozen primary pilot pool; a later model-independent semantic or lexical hard pool remains required before journal claims"
+  },
+  "training": {
+    "fit_cohorts": [
+      "primary_zuco2_nr_tsr",
+      "auxiliary_sr"
+    ],
+    "excluded_cohort": "zuco1_nr_tsr_noncausal",
+    "task_homogeneous_schedule": true,
+    "interpretation": "isolates explicit task-conditioned parameterization beyond common task-homogeneous sampling; it does not estimate the effect of task-aware batching itself",
+    "duplicate_text_within_batch": false,
+    "stored_trainable_parameters": {
+      "generic_pooled": 196608,
+      "separate_per_task": 196608,
+      "task_token": 196896,
+      "masked_shared_private": 196608
+    },
+    "active_parameters_per_example": {
+      "generic_pooled": 196608,
+      "separate_per_task": 65536,
+      "task_token": 196896,
+      "masked_shared_private": 131072
+    },
+    "capacity_interpretation": "total parameter storage is matched; routed configurations activate fewer parameters per example, so a null result cannot reject task structure generally",
+    "resume_unit": "configuration and seed",
+    "auxiliary_factor_losses": []
+  },
+  "evaluation": {
+    "checkpoint_decision_partition": {
+      "seed": 20260717,
+      "unit": "normalized_text_sha256 within NR and TSR",
+      "ordering": "seeded SHA256",
+      "allocation": "first floor(n_texts/2) per task to checkpoint; remainder to decision",
+      "checkpoint_rows": 574,
+      "decision_rows": 529,
+      "checkpoint_trial_ids_sha256": "3a8e59c340145c747923bc1200f4dc5389f748dd4dfd1f0a8cf6e9ae4b47fa0b",
+      "decision_trial_ids_sha256": "a2b4b0e880b9f64dde0b6c138d01f4e97939ab69e3aca8c206a5f0e09ea51267"
+    },
+    "checkpoint_metric": "macro mean of ZuCo2 NR and TSR MRR on the target-text-disjoint checkpoint partition",
+    "candidate_partition_policy": "checkpoint and decision targets never appear in the opposite partition's candidate pools; the two partitions share only development-training-catalog negatives",
+    "checkpoint_tie_break": "earliest epoch",
+    "signal_conditions": [
+      "correct_val",
+      "zero_val",
+      "gaussian_val",
+      "matched_wrong_val"
+    ],
+    "task_conditions": [
+      "correct",
+      "masked",
+      "shuffled"
+    ],
+    "signal_task_matrix": "all signal conditions with correct task plus correct signal with all task conditions",
+    "masked_separate_operationalization": "arithmetic mean of the three private-adapter cosine-score predictions",
+    "score_tie_break": "stable frozen candidate_rank order",
+    "seed_aggregation": "mean per-trial endpoint across the three frozen seeds before model comparison",
+    "headline_cohort": "primary_zuco2_nr_tsr decision partition",
+    "headline_task_macro": [
+      "NR",
+      "TSR"
+    ]
+  },
+  "uncertainty": {
+    "paired_endpoint": "per-trial reciprocal rank",
+    "bootstrap_replicates": 5000,
+    "clusters": [
+      "subject_id",
+      "normalized_text_sha256",
+      "two_way_subject_by_text"
+    ],
+    "interval": "two-sided 95 percent",
+    "familywise_method": "Bonferroni across the two planned baselines within each cluster",
+    "familywise_lower_quantile": 0.0125,
+    "single_contrast_lower_quantile": 0.025,
+    "planned_baselines": [
+      "generic_pooled",
+      "task_token"
+    ],
+    "seed_diagnostic": "report every seedwise task-macro delta and require the model-comparison direction to be positive in all three seeds"
+  },
+  "continuation": {
+    "required_configuration": "masked_shared_private",
+    "requirements": [
+      "headline macro MRR greater than both planned baselines",
+      "familywise lower bound greater than zero for both comparisons under all three cluster schemes",
+      "model-comparison macro MRR delta positive in all three training seeds",
+      "correct-minus-matched-wrong headline macro MRR gap positive with clustered lower bounds above zero and not below either planned baseline",
+      "correct-task minus masked-task and shuffled-task macro MRR gaps positive with familywise clustered lower bounds above zero"
+    ],
+    "separate_per_task": "diagnostic only",
+    "held_out_test_accessed": false
+  }
+}

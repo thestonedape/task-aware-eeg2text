@@ -11,11 +11,16 @@ import csv
 import hashlib
 import json
 import os
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 INDEX_FIELDS = (

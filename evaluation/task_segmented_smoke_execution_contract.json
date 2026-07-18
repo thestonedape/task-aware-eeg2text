@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "status": "frozen_before_bounded_p4b_smoke",
+  "paper_role": "operational contract for the bounded all-three-arm real-data smoke; it cannot produce a scientific decision or authorize full P4b training",
+  "immutable_inputs": {
+    "prompt_neutral_vectors": {
+      "preserved_source_id": "kaggle-dataset-thestonedape-task-aware-eegtotext-version-2",
+      "combined_manifest_sha256": "6c1fff8d2e89e33a72d03c39651e8ecce678c3b93cdb66747dd6dcc00538cddb",
+      "eeg_vector_index_sha256": "373e49da7d3d6d00aaae414437886033e7f2c6a938a92662f76a0973744e0ae9",
+      "text_vector_index_sha256": "5b0a9579cbc586a7eaab353cee7ba65ab538a5e9cbd333e51ccab9855bde98ae",
+      "trial_text_targets_sha256": "1cde6365bdfe523d2497cba56375d1a27d917cfab02d7d6a407564ce32ca2b21"
+    },
+    "task_segmented_protocol": {
+      "preserved_source_id": "kaggle-dataset-thestonedape-task-aware-eeg2text-task-segmented-protocol-version-1",
+      "contract_sha256": "396670afc0244cb601364ff89df53944c4f63402191a9d120e6e2648e5baed3b",
+      "report_sha256": "f99ff4ad371e30b86dc9582bb4c35854f6bba863d7868a5f424f93776eab8116"
+    },
+    "training_schedule": {
+      "preserved_source_id": "kaggle-dataset-thestonedape-task-aware-eeg2text-task-segmented-schedule-version-1",
+      "contract_sha256": "a6ea34388cd98380654f413b1440d0d5cee0b8065555b0c04a53d0db6ea12287",
+      "manifest_sha256": "0cf2a752b5f0a67e7282bc0b4551b4792ceb3d346dd441fef6c359515885270a",
+      "report_sha256": "5e7d953a8ca31e48d6acbd6168b146d695af449ef0ad5bc573a37d306cb7250f",
+      "indices_sha256": "79543e72f496ee3f7a8140556b274c15ecc5992e900a07bed5e5c74a2ddd7cbc",
+      "trial_catalog_sha256": "3d93e0cea4290ac22e8111760241d04109392e6f024abae85a4d9504fc4f8fc9",
+      "shape": [15, 40, 105, 64]
+    }
+  },
+  "bounded_smoke": {
+    "outer_fold": 0,
+    "training_seed": 20260717,
+    "epoch": 1,
+    "zero_based_batch_indices": [0, 1],
+    "arms": [
+      "global_mixed",
+      "true_task_segmented",
+      "pseudo_task_segmented"
+    ],
+    "optimizer_steps_per_arm": 2,
+    "total_optimizer_steps": 6,
+    "batch_size": 64,
+    "examples_per_task_pseudo_cell": 16,
+    "trainable_parameters": 196608,
+    "same_catalog_indices_across_arms": true,
+    "byte_identical_initial_state_across_arms": true
+  },
+  "execution": {
+    "vector_dtype": "float32",
+    "automatic_mixed_precision": false,
+    "optimizer": "AdamW",
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "betas": [0.9, 0.999],
+    "eps": 1e-08,
+    "amsgrad": false,
+    "maximize": false,
+    "capturable": false,
+    "differentiable": false,
+    "foreach": false,
+    "fused": false,
+    "scheduler": "none",
+    "gradient_clip_norm": 1.0,
+    "gradient_clip_norm_type": 2.0,
+    "gradient_clip_error_if_nonfinite": true,
+    "resume_scope": "after either completed optimizer step within each arm",
+    "completion_reuse": "only when the binding and every declared artifact hash revalidate"
+  },
+  "output": {
+    "top_level_files": [
+      "arm_summary.csv",
+      "common_batch_trace.csv",
+      "smoke_run_metadata.json",
+      "task_segmented_smoke_manifest.json"
+    ],
+    "per_arm_files": [
+      "resume_checkpoint.pt",
+      "run_summary.json",
+      "step_trace.csv"
+    ],
+    "checkpoint_loading_by_independent_verifier": false,
+    "all_regular_files_sha256_bound": true,
+    "held_out_test_accessed": false
+  },
+  "authorization": {
+    "bounded_smoke_authorized": true,
+    "full_training_authorized": false,
+    "checkpoint_or_confirmation_evaluation_authorized": false,
+    "scientific_decision_permitted": false,
+    "held_out_test_accessed": false,
+    "next_gate_after_pass": "independently verify and preserve the smoke artifact before any request to authorize the 45 cross-fitted fits"
+  }
+}

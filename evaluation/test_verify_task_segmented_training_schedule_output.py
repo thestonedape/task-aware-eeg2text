@@ -140,6 +140,36 @@ class TaskSegmentedScheduleOutputVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inventory mismatch"):
             self._verify(target)
 
+    def test_explicit_provenance_extra_does_not_weaken_default_inventory(self) -> None:
+        target = self._copy("declared-extra-file")
+        (target / "provenance.json").write_text("{}\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "inventory mismatch"):
+            self._verify(target)
+        result = verify(
+            target,
+            self.contract_sha256,
+            PARENT_REPORT_SHA256,
+            expected_catalog_rows=FIXTURE_CATALOG_ROWS,
+            expected_batches_per_epoch=FIXTURE_BATCHES,
+            expected_shape=FIXTURE_SHAPE,
+            require_parent_clean_remount=False,
+            allowed_extra_files=("provenance.json",),
+        )
+        self.assertEqual(result["status"], "pass")
+
+        (target / "undeclared.txt").write_text("extra\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "inventory mismatch"):
+            verify(
+                target,
+                self.contract_sha256,
+                PARENT_REPORT_SHA256,
+                expected_catalog_rows=FIXTURE_CATALOG_ROWS,
+                expected_batches_per_epoch=FIXTURE_BATCHES,
+                expected_shape=FIXTURE_SHAPE,
+                require_parent_clean_remount=False,
+                allowed_extra_files=("provenance.json",),
+            )
+
     def test_symbolic_link_cannot_impersonate_a_core_file(self) -> None:
         target = self._copy("symlink-core")
         link = target / REPORT_NAME

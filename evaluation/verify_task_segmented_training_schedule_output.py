@@ -2,8 +2,9 @@
 
 Unlike the freezers' lightweight same-run check, this verifier independently
 decodes every scheduled index and recomputes the scientific schedule
-invariants.  It intentionally accepts only the six core freezer files so a
-preserved artifact can be verified before provenance copies are added.
+invariants.  By default it accepts only the six core freezer files.  A sealed
+artifact verifier may name a narrowly bounded set of additional provenance
+files without weakening that default.
 """
 
 from __future__ import annotations
@@ -137,15 +138,27 @@ def _initialization_seed(outer_fold: int, training_seed: int) -> int:
     )
 
 
-def _verify_inventory(root: Path) -> None:
+def _verify_inventory(root: Path, allowed_extra_files: Sequence[str] = ()) -> None:
     _fail(root.is_dir(), f"schedule output root is not a directory: {root}")
+    extras = tuple(allowed_extra_files)
+    _fail(len(set(extras)) == len(extras), "allowed extra-file names are duplicated")
+    for name in extras:
+        _fail(
+            isinstance(name, str)
+            and bool(name)
+            and name not in {".", ".."}
+            and Path(name).name == name,
+            f"invalid allowed extra-file name: {name!r}",
+        )
+        _fail(name not in CORE_FILES, f"core file cannot be declared as an extra: {name}")
+    expected_files = set(CORE_FILES) | set(extras)
     entries = {entry.name: entry for entry in root.iterdir()}
-    _fail(set(entries) == set(CORE_FILES),
+    _fail(set(entries) == expected_files,
           f"schedule output inventory mismatch: {sorted(entries)}")
-    _fail(not any(entries[name].is_symlink() for name in CORE_FILES),
+    _fail(not any(entries[name].is_symlink() for name in expected_files),
           "schedule output inventory cannot contain symbolic links")
-    _fail(all(entries[name].is_file() for name in CORE_FILES),
-          "all six schedule entries must be regular files")
+    _fail(all(entries[name].is_file() for name in expected_files),
+          "all schedule entries must be regular files")
 
 
 def _verify_hash_bindings(
@@ -535,6 +548,7 @@ def verify(
     expected_batches_per_epoch: int | None = PRODUCTION_BATCHES_PER_EPOCH,
     expected_shape: Sequence[int] | None = None,
     require_parent_clean_remount: bool = True,
+    allowed_extra_files: Sequence[str] = (),
 ) -> dict[str, object]:
     """Verify a mounted schedule without trusting its self-declared checks.
 
@@ -543,6 +557,10 @@ def verify(
     fixtures.  Production verification defaults to the prospectively known
     9,011-row catalog and B=105; both are also independently derived from the
     mounted catalog rather than trusted from the report or manifest.
+
+    ``allowed_extra_files`` is reserved for an enclosing sealed-artifact
+    verifier.  It must contain exact root-level basenames; the default remains
+    the original strict six-file inventory.
     """
 
     _fail(_is_sha256(expected_schedule_contract_sha256),
@@ -550,7 +568,7 @@ def verify(
     _fail(_is_sha256(expected_parent_protocol_report_sha256),
           "expected parent-report digest is not lowercase SHA-256")
     root = Path(output_root)
-    _verify_inventory(root)
+    _verify_inventory(root, allowed_extra_files)
     report = _read_json(root / REPORT_NAME)
     manifest = _read_json(root / MANIFEST_NAME)
     actual_hashes = _verify_hash_bindings(root, report, manifest)

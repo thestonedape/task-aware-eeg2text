@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "status": "prospectively_frozen_before_p4b_training",
+  "paper_role": "single replacement gate for task-segmented contrastive learning; no richer-factor or generation loss",
+  "input": {
+    "preserved_source_id": "kaggle-dataset-thestonedape-task-aware-eegtotext-version-2",
+    "combined_manifest_sha256": "6c1fff8d2e89e33a72d03c39651e8ecce678c3b93cdb66747dd6dcc00538cddb",
+    "eeg_vector_index_sha256": "373e49da7d3d6d00aaae414437886033e7f2c6a938a92662f76a0973744e0ae9",
+    "text_vector_index_sha256": "5b0a9579cbc586a7eaab353cee7ba65ab538a5e9cbd333e51ccab9855bde98ae",
+    "trial_text_targets_sha256": "1cde6365bdfe523d2497cba56375d1a27d917cfab02d7d6a407564ce32ca2b21",
+    "eeg_condition": "correct_train",
+    "representation": "released GLIM 1024-D global EEG vector",
+    "representation_prompt_mode": "all_masked",
+    "backbone_trainable": false
+  },
+  "eligibility": {
+    "split": "train",
+    "cohort": "primary_zuco2_nr_tsr",
+    "dataset_version": "ZuCo2",
+    "reading_tasks": [
+      "NR",
+      "TSR"
+    ],
+    "excluded": [
+      "all validation rows",
+      "all held-out test rows",
+      "auxiliary SR",
+      "ZuCo1 NR/TSR"
+    ]
+  },
+  "cross_fitting": {
+    "group": "normalized_text_sha256 globally across NR and TSR",
+    "folds": 5,
+    "partition_seed": 2026071801,
+    "assignment": "deterministic greedy balance of NR/TSR row and identity counts; seeded SHA256 tie-break",
+    "outer_fold_k": {
+      "confirmation": "fold k",
+      "checkpoint": "fold (k + 1) mod 5",
+      "fit": "remaining three folds"
+    },
+    "opposite_partition_target_candidates_prohibited": true,
+    "consumed_official_validation_role": "descriptive_only",
+    "held_out_test_accessed": false
+  },
+  "pseudo_groups": {
+    "groups": [
+      0,
+      1
+    ],
+    "seed": 2026071802,
+    "unit": "reading_task plus normalized_text_sha256",
+    "assignment": "seeded alternating assignment within reading task and frozen whitespace-length stratum",
+    "length_strata": [
+      "0-5",
+      "6-10",
+      "11-15",
+      "16-20",
+      "21-30",
+      "31+"
+    ],
+    "outcome_or_model_score_used": false
+  },
+  "arms": [
+    {
+      "id": "global_mixed",
+      "training_negative_mask": "31 seeded-hash-selected negatives from the other 63 common-batch examples",
+      "task_input_at_inference": "none"
+    },
+    {
+      "id": "true_task_segmented",
+      "training_negative_mask": "the other 31 common-batch examples sharing the real reading task",
+      "task_input_at_inference": "none"
+    },
+    {
+      "id": "pseudo_task_segmented",
+      "training_negative_mask": "the other 31 common-batch examples sharing the frozen pseudo group",
+      "task_input_at_inference": "none"
+    }
+  ],
+  "shared_model": {
+    "adapter": "one shared bias-free residual bottleneck",
+    "vector_dim": 1024,
+    "rank": 96,
+    "trainable_parameters": 196608,
+    "active_trainable_parameters_per_example": 196608,
+    "stored_and_active_trainable_parameters_equal": true,
+    "paired_initialization_within_seed": true,
+    "task_token": false,
+    "routing": false
+  },
+  "batches": {
+    "batch_size": 64,
+    "grid_cells": [
+      "NR::0",
+      "NR::1",
+      "TSR::0",
+      "TSR::1"
+    ],
+    "examples_per_cell": 16,
+    "unique_normalized_text_within_batch": true,
+    "negatives_per_anchor": 31,
+    "same_anchor_and_batch_schedule_across_arms": true,
+    "full_schedule_must_be_frozen_and_hashed_before_training": true
+  },
+  "training": {
+    "objective": "symmetric cosine contrastive alignment with arm-specific frozen negative mask",
+    "optimizer": "AdamW",
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 40,
+    "gradient_clip_norm": 1.0,
+    "seeds": [
+      20260717,
+      20260718,
+      20260719
+    ],
+    "runs_per_outer_fold": 9,
+    "total_runs": 45,
+    "checkpoint_rule": "highest checkpoint-partition macro NR/TSR MRR; epoch zero eligible; earliest epoch breaks ties",
+    "auxiliary_factor_losses": []
+  },
+  "evaluation": {
+    "pool_size": 24,
+    "pool_seed": 2026071804,
+    "checkpoint_pool": "same partition, dataset and task; positive plus 23 closest-length candidates with seeded SHA256 tie-break",
+    "confirmation_pool": "same partition, dataset and task; positive plus designated matched-donor text plus 22 closest-length candidates with seeded SHA256 tie-break",
+    "model_scores_used_for_pooling": false,
+    "primary_endpoint": "seed-averaged out-of-fold per-trial reciprocal rank, macro-averaged over NR and TSR",
+    "chance_mrr_24_way": 0.15733159073972944,
+    "signal_condition": "correct vector versus same-fold same-task same-subject different-text donor correct_train vector",
+    "donor_seed": 2026071803,
+    "donor_attraction_reported": true
+  },
+  "uncertainty": {
+    "bootstrap_replicates": 5000,
+    "bootstrap_strata": [
+      "outer_fold",
+      "reading_task"
+    ],
+    "clusters": [
+      "subject_id",
+      "normalized_text_sha256",
+      "two_way_subject_by_text"
+    ],
+    "planned_superiority_baselines": [
+      "global_mixed",
+      "pseudo_task_segmented"
+    ],
+    "superiority_familywise_lower_quantile": 0.0125,
+    "per_task_noninferiority_margin_mrr": 0.01,
+    "per_task_noninferiority_comparisons": 4,
+    "per_task_noninferiority_lower_quantile": 0.0125,
+    "signal_gap_noninferiority_margin_mrr": 0.005
+  },
+  "continuation": {
+    "required_arm": "true_task_segmented",
+    "requirements": [
+      "headline macro MRR exceeds global_mixed and pseudo_task_segmented",
+      "both superiority familywise clustered lower bounds exceed zero under every cluster scheme",
+      "both headline deltas are positive in all three training seeds",
+      "all NR/TSR by baseline clustered lower bounds exceed -0.01",
+      "the absolute true-task-segmented macro-MRR clustered lower bound exceeds 0.15733159073972944",
+      "correct-minus-matched-wrong real-EEG clustered lower bounds exceed zero under every cluster scheme",
+      "the true-task-segmented signal gap is noninferior to both baselines within 0.005 MRR"
+    ],
+    "failure_action": "stop P4b permanently; no retuning, richer-factor training, generation training, or held-out-test access"
+  },
+  "prohibited": [
+    "reuse of the consumed official-validation decision partition as confirmation",
+    "access to the held-out test split",
+    "task token or routing at inference",
+    "post-hoc change of folds, pseudo groups, margins, seeds, pools, or continuation requirements",
+    "richer-factor or generation training before every P4b requirement passes"
+  ]
+}

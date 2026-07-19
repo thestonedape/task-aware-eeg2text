@@ -158,6 +158,7 @@ def build_preserved_inputs(
             "donor_normalized_text_sha256": donor_hash,
             "target_length": 10, "donor_length": 11,
             "absolute_length_difference": 1,
+            "selection_rule": "fixture",
         })
     write_csv(protocol / "confirmation_donors.csv", verifier.DONOR_FIELDS, donors)
 

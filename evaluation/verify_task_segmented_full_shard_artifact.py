@@ -119,6 +119,7 @@ DONOR_FIELDS = (
     "dataset_version", "reading_task", "subject_id",
     "target_normalized_text_sha256", "donor_normalized_text_sha256",
     "target_length", "donor_length", "absolute_length_difference",
+    "selection_rule",
 )
 
 IMMUTABLE_INPUTS: dict[str, dict[str, Any]] = {

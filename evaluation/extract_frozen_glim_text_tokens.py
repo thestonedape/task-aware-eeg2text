@@ -229,7 +229,7 @@ class GLIMTextTokenEmbedder:
     checkpoint); exercised on Kaggle.
     """
 
-    def __init__(self, glim_root: Path, checkpoint: Path, device: str):
+    def __init__(self, glim_root: Path, checkpoint: Path, device: str, text_batch_size: int = 64):
         import torch
         from transformers import AutoTokenizer, T5ForConditionalGeneration
 
@@ -261,8 +261,9 @@ class GLIMTextTokenEmbedder:
         self.token_len = int(model.input_text_len - model.prompt_tuning_len)
         self.vector_dim = int(model.embed_dim)
         self.text_model_id = str(model.text_model_id)
+        self.text_batch_size = int(text_batch_size)
 
-    def __call__(self, texts: list[str]):
+    def _forward(self, texts: list[str]):
         torch = self.torch
         with torch.inference_mode(), torch.autocast(
             device_type=self.device.type, dtype=torch.float16, enabled=self.device.type == "cuda"
@@ -272,9 +273,22 @@ class GLIMTextTokenEmbedder:
             vectors = self.model.aligner.embed_text(hidden, hidden_mask)
             if vectors.ndim == 1:
                 vectors = vectors.unsqueeze(0)
-        tokens = hidden.detach().float().cpu().numpy()
-        masks = hidden_mask.detach().to(torch.int8).cpu().numpy()
-        vecs = vectors.detach().float().cpu().numpy()
+        return (hidden.detach().float().cpu().numpy(),
+                hidden_mask.detach().to(torch.int8).cpu().numpy(),
+                vectors.detach().float().cpu().numpy())
+
+    def __call__(self, texts: list[str]):
+        # Sub-batch the T5 forward at ``text_batch_size`` to match the frozen text-vector
+        # extractor's batch construction (fp16 GEMM kernel selection is shape-dependent,
+        # so batch size can perturb outputs at the fp16 level).
+        bs = self.text_batch_size
+        tok_parts, mask_parts, vec_parts = [], [], []
+        for i in range(0, len(texts), bs):
+            t, m, v = self._forward(texts[i:i + bs])
+            tok_parts.append(t); mask_parts.append(m); vec_parts.append(v)
+        tokens = np.concatenate(tok_parts, axis=0)
+        masks = np.concatenate(mask_parts, axis=0)
+        vecs = np.concatenate(vec_parts, axis=0)
         if tokens.shape != (len(texts), self.token_len, self.vector_dim):
             raise ValueError(f"GLIM returned text tokens {tokens.shape}")
         return tokens, masks, vecs
@@ -291,6 +305,8 @@ def main() -> None:
     parser.add_argument("--expected-checkpoint-sha256", required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--chunk-size", type=int, default=256)
+    parser.add_argument("--text-batch-size", type=int, default=64,
+                        help="T5 forward batch size; match the frozen extractor (64)")
     parser.add_argument("--dtype", choices=("float16", "float32"), default="float16")
     parser.add_argument("--smoke-limit", type=int)
     args = parser.parse_args()
@@ -310,7 +326,8 @@ def main() -> None:
         mapping = [m for m in mapping if m["text_target_id"] in allowed]
         run_mode = "smoke"
 
-    embedder = GLIMTextTokenEmbedder(args.glim_root, args.checkpoint, args.device)
+    embedder = GLIMTextTokenEmbedder(
+        args.glim_root, args.checkpoint, args.device, text_batch_size=args.text_batch_size)
     manifest = run_text_token_extraction(
         records, mapping, args.output_root, embedder,
         checkpoint_sha256=checkpoint_sha, glim_commit=args.glim_commit,

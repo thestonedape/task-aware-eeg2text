@@ -46,13 +46,14 @@ def fake_load_eeg(row):
 
 
 def fake_embed(eeg_list, mask_list, sample_ids, source_rows, tasks):
-    """Deterministic tokens derived from sample_id so hashes are reproducible."""
-    out = np.zeros((len(sample_ids), TOKEN_COUNT, TOKEN_DIM), dtype=np.float32)
+    """Deterministic (tokens, vectors) from sample_id so hashes are reproducible."""
+    tokens = np.zeros((len(sample_ids), TOKEN_COUNT, TOKEN_DIM), dtype=np.float32)
+    vectors = np.zeros((len(sample_ids), TOKEN_DIM), dtype=np.float32)
     for i, sid in enumerate(sample_ids):
-        seed = abs(hash(sid)) % (2**31)
-        rng = np.random.default_rng(seed)
-        out[i] = rng.standard_normal((TOKEN_COUNT, TOKEN_DIM), dtype=np.float32)
-    return out
+        rng = np.random.default_rng(abs(hash(sid)) % (2**31))
+        tokens[i] = rng.standard_normal((TOKEN_COUNT, TOKEN_DIM), dtype=np.float32)
+        vectors[i] = rng.standard_normal(TOKEN_DIM, dtype=np.float32)
+    return tokens, vectors
 
 
 class TokenExtractionTests(unittest.TestCase):
@@ -74,9 +75,11 @@ class TokenExtractionTests(unittest.TestCase):
             self.assertEqual(index["dtype"], "float16")
             written = json.loads((Path(tmp) / "token_index.json").read_text())
             self.assertEqual(written["combined_chunk_sha256"], index["combined_chunk_sha256"])
-            last = np.load(Path(tmp) / "tokens" / "tokens_00002.npz")["tokens"]
-            self.assertEqual(last.shape, (2, TOKEN_COUNT, TOKEN_DIM))
-            self.assertEqual(last.dtype, np.float16)
+            with np.load(Path(tmp) / "tokens" / "tokens_00002.npz") as arch:
+                self.assertEqual(set(arch.files), {"tokens", "vectors"})
+                self.assertEqual(arch["tokens"].shape, (2, TOKEN_COUNT, TOKEN_DIM))
+                self.assertEqual(arch["tokens"].dtype, np.float16)
+                self.assertEqual(arch["vectors"].shape, (2, TOKEN_DIM))
 
     def test_identity_binding_recorded_per_chunk(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -105,15 +108,19 @@ class TokenExtractionTests(unittest.TestCase):
 
     def test_hash_changes_when_identity_changes(self):
         tokens = np.zeros((2, TOKEN_COUNT, TOKEN_DIM), dtype=np.float16)
-        base = token_chunk_sha256(tokens, ["t0", "t1"], ["s0", "s1"], [0, 1])
-        moved = token_chunk_sha256(tokens, ["t0", "t1"], ["s0", "s1"], [0, 2])
-        relabel = token_chunk_sha256(tokens, ["t0", "tX"], ["s0", "s1"], [0, 1])
+        vectors = np.zeros((2, TOKEN_DIM), dtype=np.float16)
+        base = token_chunk_sha256(tokens, vectors, ["t0", "t1"], ["s0", "s1"], [0, 1])
+        moved = token_chunk_sha256(tokens, vectors, ["t0", "t1"], ["s0", "s1"], [0, 2])
+        relabel = token_chunk_sha256(tokens, vectors, ["t0", "tX"], ["s0", "s1"], [0, 1])
+        vecdiff = token_chunk_sha256(tokens, vectors + 1, ["t0", "t1"], ["s0", "s1"], [0, 1])
         self.assertNotEqual(base, moved)
         self.assertNotEqual(base, relabel)
+        self.assertNotEqual(base, vecdiff)
 
     def test_rejects_wrong_token_shape(self):
         def bad_embed(eeg_list, mask_list, sample_ids, source_rows, tasks):
-            return np.zeros((len(sample_ids), TOKEN_COUNT, 512), dtype=np.float32)
+            n = len(sample_ids)
+            return np.zeros((n, TOKEN_COUNT, 512), dtype=np.float32), np.zeros((n, TOKEN_DIM), dtype=np.float32)
 
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
@@ -125,9 +132,10 @@ class TokenExtractionTests(unittest.TestCase):
 
     def test_rejects_non_finite_tokens(self):
         def nan_embed(eeg_list, mask_list, sample_ids, source_rows, tasks):
-            out = np.zeros((len(sample_ids), TOKEN_COUNT, TOKEN_DIM), dtype=np.float32)
+            n = len(sample_ids)
+            out = np.zeros((n, TOKEN_COUNT, TOKEN_DIM), dtype=np.float32)
             out[0, 0, 0] = np.nan
-            return out
+            return out, np.zeros((n, TOKEN_DIM), dtype=np.float32)
 
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):

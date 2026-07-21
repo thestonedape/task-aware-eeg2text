@@ -5,11 +5,13 @@ Companion to ``extract_frozen_glim_vectors.py`` (which stores only the pooled
 ``eeg_tokens`` [96, 1024] sequence that the same GLIM forward pass already
 produces, for the token-level late-interaction retrieval experiment.
 
-Only one condition is stored: correct EEG per trial. The matched-wrong-EEG
-control is realised at evaluation time by looking up a donor trial's stored
-tokens, so no separate wrong-EEG extraction is needed. Tokens are stored as
-float16 (MaxSim L2-normalizes, so half precision is ample and halves the
-~3.5 GB float32 footprint).
+One forward pass per trial produces BOTH the 96 unpooled tokens and GLIM's
+learned pooled vector; both are stored (tokens feed the MaxSim arm, the pooled
+vector feeds the pooled-cosine arm of the primary pair, and having both from the
+identical pass guarantees they are consistent). Only correct EEG is stored; the
+matched-wrong-EEG control is realised at eval time from a donor trial's stored
+tokens. Stored as float16 (MaxSim/cosine L2-normalize, so half precision is ample
+and halves the footprint).
 
 The extraction driver takes an ``embed`` callable and an ``eeg`` loader, so the
 chunking/hashing/identity/resume logic is unit-testable with a fake embedder and
@@ -34,12 +36,13 @@ LoadEegFn = Callable[[dict], "tuple[np.ndarray, np.ndarray]"]
 
 
 def token_chunk_sha256(
-    tokens: np.ndarray, trial_ids: Sequence[str], sample_ids: Sequence[str],
-    source_rows: Sequence[int],
+    tokens: np.ndarray, vectors: np.ndarray, trial_ids: Sequence[str],
+    sample_ids: Sequence[str], source_rows: Sequence[int],
 ) -> str:
     state = hashlib.sha256()
     state.update(np.ascontiguousarray(tokens).tobytes())
-    state.update(f"{tokens.dtype}\x1f{tokens.shape}\n".encode("utf-8"))
+    state.update(np.ascontiguousarray(vectors).tobytes())
+    state.update(f"{tokens.dtype}\x1f{tokens.shape}\x1f{vectors.shape}\n".encode("utf-8"))
     for tid, sid, row in zip(trial_ids, sample_ids, source_rows):
         state.update(f"{tid}\x1f{sid}\x1f{row}\n".encode("utf-8"))
     return state.hexdigest()
@@ -98,16 +101,21 @@ def run_token_extraction(
             eeg, mask = load_eeg(row)
             eeg_list.append(eeg)
             mask_list.append(mask)
-        tokens = embed(eeg_list, mask_list, sample_ids, source_rows, tasks)
+        tokens, vectors = embed(eeg_list, mask_list, sample_ids, source_rows, tasks)
         tokens = np.ascontiguousarray(tokens).astype(np_dtype, copy=False)
+        vectors = np.ascontiguousarray(vectors).astype(np_dtype, copy=False)
         if tokens.shape != (len(batch), TOKEN_COUNT, TOKEN_DIM):
             raise ValueError(
                 f"chunk {chunk_number}: expected {(len(batch), TOKEN_COUNT, TOKEN_DIM)}, got {tokens.shape}"
             )
-        if not np.isfinite(tokens.astype(np.float32)).all():
-            raise ValueError(f"chunk {chunk_number}: non-finite tokens")
+        if vectors.shape != (len(batch), TOKEN_DIM):
+            raise ValueError(
+                f"chunk {chunk_number}: expected vectors {(len(batch), TOKEN_DIM)}, got {vectors.shape}"
+            )
+        if not np.isfinite(tokens.astype(np.float32)).all() or not np.isfinite(vectors.astype(np.float32)).all():
+            raise ValueError(f"chunk {chunk_number}: non-finite tokens or vectors")
 
-        sha = token_chunk_sha256(tokens, trial_ids, sample_ids, source_rows)
+        sha = token_chunk_sha256(tokens, vectors, trial_ids, sample_ids, source_rows)
         entry = {
             "chunk_number": chunk_number,
             "rows": len(batch),
@@ -117,7 +125,7 @@ def run_token_extraction(
         }
 
         if not _valid_existing_chunk(npz_path, meta_path, sha):
-            atomic_npz(npz_path, tokens=tokens)
+            atomic_npz(npz_path, tokens=tokens, vectors=vectors)
             atomic_json(meta_path, {
                 "chunk_number": chunk_number,
                 "rows": len(batch),
@@ -188,7 +196,8 @@ class GLIMTokenEmbedder:
             raise ValueError("prompt_mode must be 'canonical' or 'all_masked'")
         self.prompt_mode = prompt_mode
 
-    def __call__(self, eeg_list, mask_list, sample_ids, source_rows, tasks) -> np.ndarray:
+    def __call__(self, eeg_list, mask_list, sample_ids, source_rows, tasks):
+        """Return (tokens [B,96,1024], vectors [B,1024]) from one forward pass."""
         torch = self.torch
         max_t = max(int(e.shape[0]) for e in eeg_list)
         channels = eeg_list[0].shape[1]
@@ -211,9 +220,12 @@ class GLIMTokenEmbedder:
             if output["sample_id"] != sample_ids or output["source_dataframe_row_index"] != source_rows:
                 raise ValueError("GLIM adapter changed batch identities")
             tokens = output["eeg_tokens"].detach().float().cpu().numpy()
+            vectors = output["eeg_vector"].detach().float().cpu().numpy()
         if tokens.shape != (batch, TOKEN_COUNT, TOKEN_DIM):
             raise ValueError(f"GLIM returned tokens {tokens.shape}, expected {(batch, TOKEN_COUNT, TOKEN_DIM)}")
-        return tokens
+        if vectors.shape != (batch, TOKEN_DIM):
+            raise ValueError(f"GLIM returned vectors {vectors.shape}, expected {(batch, TOKEN_DIM)}")
+        return tokens, vectors
 
 
 def select_primary_cohort(train_rows: list[dict]) -> list[dict]:
@@ -237,7 +249,6 @@ def main() -> None:
         load_development_rows,
         sha256,
     )
-    from evaluation.token_diagnostics import token_collapse_report
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path, required=True)
@@ -251,7 +262,6 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--chunk-size", type=int, default=128)
     parser.add_argument("--dtype", choices=("float16", "float32"), default="float16")
-    parser.add_argument("--diagnostics-sample", type=int, default=512)
     parser.add_argument("--smoke-limit", type=int)
     args = parser.parse_args()
 
@@ -296,20 +306,47 @@ def main() -> None:
     print(f"TOKEN EXTRACTION: {index['total_rows']} rows, {index['num_chunks']} chunks, "
           f"combined_chunk_sha256={index['combined_chunk_sha256']}")
 
-    # Gate-1 diagnostic on a sample of the extracted tokens (make-or-break check).
-    want = min(args.diagnostics_sample, index["total_rows"])
-    collected, got = [], 0
-    for entry in index["chunks"]:
-        arr = np.load(args.output_root / entry["token_file"])["tokens"]
-        collected.append(arr)
-        got += arr.shape[0]
-        if got >= want:
-            break
-    tokens = torch.from_numpy(
-        np.concatenate(collected, axis=0)[:want].astype(np.float32)
+    # Gate-1 diagnostic over the FULL cohort, streamed chunk-by-chunk (memory-safe:
+    # per-trial redundancy and effective rank are cheap scalars; we never hold all
+    # 9,011 x 96 x 1024 tokens at once).
+    from evaluation.token_diagnostics import (
+        effective_rank, position_liveness, verdict_from_stats, within_trial_redundancy,
     )
-    report = token_collapse_report(tokens)
-    print("GATE-1 TOKEN DIAGNOSTIC:")
+    red_sum = eff_sum = norm_sum = count = 0.0
+    norm_min, norm_max, red_max = float("inf"), 0.0, 0.0
+    finite = True
+    live_sample = []
+    for entry in index["chunks"]:
+        with np.load(args.output_root / entry["token_file"]) as _arch:
+            arr = _arch["tokens"].astype(np.float32)
+        t = torch.from_numpy(arr)
+        if not bool(torch.isfinite(t).all()):
+            finite = False
+        norms = t.norm(dim=-1)
+        norm_min = min(norm_min, float(norms.min()))
+        norm_max = max(norm_max, float(norms.max()))
+        norm_sum += float(norms.sum()); count += norms.numel()
+        red = within_trial_redundancy(t)
+        red_sum += float(red.sum()); red_max = max(red_max, float(red.max()))
+        eff_sum += float(effective_rank(t).sum())
+        if len(live_sample) < 2048:
+            live_sample.append(arr)
+    trials = index["total_rows"]
+    mean_red = red_sum / trials
+    mean_eff = eff_sum / trials
+    live = position_liveness(torch.from_numpy(np.concatenate(live_sample, axis=0)[:2048]))
+    report = {
+        "cohort_trials": trials, "tokens_per_trial": TOKEN_COUNT, "dim": TOKEN_DIM,
+        "finite": finite,
+        "token_norm_mean": norm_sum / count, "token_norm_min": norm_min, "token_norm_max": norm_max,
+        "within_trial_redundancy_mean": mean_red, "within_trial_redundancy_max": red_max,
+        "effective_rank_mean": mean_eff, "effective_rank_fraction_of_T": mean_eff / TOKEN_COUNT,
+        **{f"{k}_sample2048": v for k, v in live.items()},
+        "verdict": verdict_from_stats(mean_red, mean_eff, TOKEN_COUNT, finite, norm_min),
+    }
+    with open(args.output_root / "gate1_token_diagnostic.json", "w", encoding="utf-8") as handle:
+        _json.dump(report, handle, indent=2, sort_keys=True); handle.write("\n")
+    print("GATE-1 TOKEN DIAGNOSTIC (full cohort):")
     print(_json.dumps(report, indent=2, sort_keys=True))
     print("VERDICT:", report["verdict"])
 

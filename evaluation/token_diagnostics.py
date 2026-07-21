@@ -58,8 +58,27 @@ def position_liveness(tokens: torch.Tensor, dead_threshold: float = 1e-4) -> dic
     }
 
 
+def verdict_from_stats(
+    mean_redundancy: float, mean_effective_rank: float, tokens_per_trial: int,
+    finite: bool, min_norm: float,
+) -> str:
+    """Plain COLLAPSED / WEAK / RICH verdict from aggregate token statistics.
+
+    Separated so it can be applied to streamed cohort-wide aggregates as well as
+    a single in-memory batch.
+    """
+    eff_fraction = mean_effective_rank / tokens_per_trial
+    if not finite or min_norm == 0.0:
+        return "INVALID: non-finite or zero-norm tokens"
+    if mean_redundancy > 0.97 and eff_fraction < 0.05:
+        return "COLLAPSED: tokens near-redundant; MaxSim cannot help -> fall back to A"
+    if mean_redundancy > 0.9 or eff_fraction < 0.15:
+        return "WEAK: limited token diversity; MaxSim upside likely small"
+    return "RICH: tokens are genuinely varying; MaxSim has headroom to test"
+
+
 def token_collapse_report(tokens: torch.Tensor) -> dict:
-    """Assemble the Gate-1 report + a plain verdict."""
+    """Assemble the Gate-1 report + a plain verdict for one in-memory batch."""
     if tokens.ndim != 3:
         raise ValueError("tokens must be [B, T, D]")
     b, n, d = tokens.shape
@@ -71,7 +90,8 @@ def token_collapse_report(tokens: torch.Tensor) -> dict:
         return {
             "batch": b, "tokens_per_trial": n, "dim": d, "finite": finite,
             "token_norm_min": float("nan") if not finite else float(norms.min()),
-            "verdict": "INVALID: non-finite or zero-norm tokens",
+            "verdict": verdict_from_stats(0.0, float(n), n, finite,
+                                          0.0 if not finite else float(norms.min())),
         }
 
     redundancy = within_trial_redundancy(tokens)
@@ -80,15 +100,6 @@ def token_collapse_report(tokens: torch.Tensor) -> dict:
 
     mean_redundancy = float(redundancy.mean())
     mean_eff = float(eff.mean())
-    eff_fraction = mean_eff / n                          # 0..1
-
-    # Verdict: collapsed if tokens are near-identical AND span a tiny subspace.
-    if mean_redundancy > 0.97 and eff_fraction < 0.05:
-        verdict = "COLLAPSED: tokens near-redundant; MaxSim cannot help -> fall back to A"
-    elif mean_redundancy > 0.9 or eff_fraction < 0.15:
-        verdict = "WEAK: limited token diversity; MaxSim upside likely small"
-    else:
-        verdict = "RICH: tokens are genuinely varying; MaxSim has headroom to test"
 
     return {
         "batch": b, "tokens_per_trial": n, "dim": d,
@@ -99,7 +110,7 @@ def token_collapse_report(tokens: torch.Tensor) -> dict:
         "within_trial_redundancy_mean": mean_redundancy,
         "within_trial_redundancy_max": float(redundancy.max()),
         "effective_rank_mean": mean_eff,
-        "effective_rank_fraction_of_T": eff_fraction,
+        "effective_rank_fraction_of_T": mean_eff / n,
         **live,
-        "verdict": verdict,
+        "verdict": verdict_from_stats(mean_redundancy, mean_eff, n, finite, float(norms.min())),
     }

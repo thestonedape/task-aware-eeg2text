@@ -18,6 +18,7 @@ from evaluation.extract_frozen_glim_tokens import (
     TOKEN_DIM,
     run_token_extraction,
     select_primary_cohort,
+    subbatched_embed,
     token_chunk_sha256,
 )
 
@@ -157,6 +158,29 @@ class TokenExtractionTests(unittest.TestCase):
         self.assertEqual([r["source_dataframe_row_index"] for r in cohort], [0, 1, 5])  # sorted, filtered
         self.assertTrue(all(r["dataset_version"] == "ZuCo2" for r in cohort))
         self.assertTrue(all(r["reading_task"] in {"NR", "TSR"} for r in cohort))
+
+    def test_subbatched_embed_concatenates_both_arrays_in_order(self):
+        # Regression: main()'s wrapper must return (tokens, vectors) — not a
+        # concatenation of tuples — when a chunk spans multiple GPU sub-batches.
+        n = 10  # > batch_size, so the sub-batching loop runs several times
+
+        def embedder(eeg_list, mask_list, sample_ids, source_rows, tasks):
+            b = len(sample_ids)
+            tok = np.stack([np.full((TOKEN_COUNT, TOKEN_DIM), r, np.float32) for r in source_rows])
+            vec = np.stack([np.full((TOKEN_DIM,), r, np.float32) for r in source_rows])
+            return tok, vec
+
+        rows = make_rows(n)
+        tokens, vectors = subbatched_embed(
+            embedder, [fake_load_eeg(r)[0] for r in rows], [fake_load_eeg(r)[1] for r in rows],
+            [r["sample_id"] for r in rows], [r["source_dataframe_row_index"] for r in rows],
+            [r["reading_task"] for r in rows], batch_size=4,
+        )
+        self.assertEqual(tokens.shape, (n, TOKEN_COUNT, TOKEN_DIM))
+        self.assertEqual(vectors.shape, (n, TOKEN_DIM))
+        # order preserved across sub-batch boundaries: row i is tagged with value i
+        self.assertTrue(np.array_equal(tokens[:, 0, 0], np.arange(n, dtype=np.float32)))
+        self.assertTrue(np.array_equal(vectors[:, 0], np.arange(n, dtype=np.float32)))
 
     def test_rejects_bad_prompt_mode_and_dtype(self):
         with tempfile.TemporaryDirectory() as tmp:

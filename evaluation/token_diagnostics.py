@@ -25,10 +25,18 @@ import torch
 from project_adapters.token_late_interaction import l2_normalize
 
 
-def within_trial_redundancy(tokens: torch.Tensor) -> torch.Tensor:
-    """[B, T, D] -> [B] mean off-diagonal cosine among each trial's T tokens."""
+def within_trial_redundancy(tokens: torch.Tensor, center: bool = False) -> torch.Tensor:
+    """[B, T, D] -> [B] mean off-diagonal cosine among each trial's T tokens.
+
+    ``center=True`` subtracts each trial's mean token first, so a large shared
+    "DC" direction (transformer anisotropy) cannot masquerade as collapse. Raw
+    and centered redundancy are both reported at Gate 1: raw high + centered low
+    means the tokens are anisotropic but genuinely varied, not collapsed.
+    """
     if tokens.ndim != 3:
         raise ValueError("tokens must be [B, T, D]")
+    if center:
+        tokens = tokens - tokens.mean(dim=1, keepdim=True)
     t = l2_normalize(tokens, dim=-1)
     gram = torch.matmul(t, t.transpose(1, 2))          # [B, T, T] cosine
     b, n, _ = gram.shape

@@ -36,6 +36,15 @@ class TokenDiagnosticsTests(unittest.TestCase):
         self.assertGreater(within_trial_redundancy(collapsed_tokens()).mean().item(), 0.99)
         self.assertLess(abs(within_trial_redundancy(rich_tokens()).mean().item()), 0.1)
 
+    def test_centered_redundancy_unmasks_anisotropy(self):
+        # Rich, varied tokens riding on a large shared DC direction: raw cosine
+        # reads highly redundant, but centering reveals they are not collapsed.
+        g = torch.Generator().manual_seed(1)
+        dc = 20.0 * torch.ones(B, 1, D)
+        anisotropic = dc + torch.randn(B, T, D, generator=g)
+        self.assertGreater(within_trial_redundancy(anisotropic).mean().item(), 0.9)
+        self.assertLess(within_trial_redundancy(anisotropic, center=True).mean().item(), 0.1)
+
     def test_effective_rank_separates(self):
         # collapsed => participation ratio near 1; rich => large (many directions).
         self.assertLess(effective_rank(collapsed_tokens()).mean().item(), 1.5)

@@ -228,6 +228,22 @@ class GLIMTokenEmbedder:
         return tokens, vectors
 
 
+def subbatched_embed(embedder, eeg_list, mask_list, sample_ids, source_rows, tasks, batch_size):
+    """Run ``embedder`` in GPU-sized sub-batches, concatenating each of the two
+    returned arrays (tokens, vectors) separately so a chunk larger than the GPU
+    batch stays one logical unit. Order-preserving.
+    """
+    tok_parts, vec_parts = [], []
+    for i in range(0, len(eeg_list), batch_size):
+        j = i + batch_size
+        tok, vec = embedder(
+            eeg_list[i:j], mask_list[i:j], sample_ids[i:j], source_rows[i:j], tasks[i:j]
+        )
+        tok_parts.append(tok)
+        vec_parts.append(vec)
+    return np.concatenate(tok_parts, axis=0), np.concatenate(vec_parts, axis=0)
+
+
 def select_primary_cohort(train_rows: list[dict]) -> list[dict]:
     """Filter canonical train rows to the P4b primary_zuco2_nr_tsr cohort."""
     cohort = [
@@ -288,13 +304,9 @@ def main() -> None:
     )
 
     def embed(eeg_list, mask_list, sample_ids, source_rows, tasks):
-        parts = []
-        for i in range(0, len(eeg_list), args.batch_size):
-            j = i + args.batch_size
-            parts.append(embedder(
-                eeg_list[i:j], mask_list[i:j], sample_ids[i:j], source_rows[i:j], tasks[i:j]
-            ))
-        return np.concatenate(parts, axis=0)
+        return subbatched_embed(
+            embedder, eeg_list, mask_list, sample_ids, source_rows, tasks, args.batch_size
+        )
 
     index = run_token_extraction(
         cohort, embed, args.output_root,
@@ -312,10 +324,10 @@ def main() -> None:
     from evaluation.token_diagnostics import (
         effective_rank, position_liveness, verdict_from_stats, within_trial_redundancy,
     )
-    red_sum = eff_sum = norm_sum = count = 0.0
+    red_sum = red_c_sum = eff_sum = norm_sum = count = 0.0
     norm_min, norm_max, red_max = float("inf"), 0.0, 0.0
     finite = True
-    live_sample = []
+    live_sample, live_trials = [], 0          # capped by trials, not chunks (memory-safe)
     for entry in index["chunks"]:
         with np.load(args.output_root / entry["token_file"]) as _arch:
             arr = _arch["tokens"].astype(np.float32)
@@ -328,21 +340,29 @@ def main() -> None:
         norm_sum += float(norms.sum()); count += norms.numel()
         red = within_trial_redundancy(t)
         red_sum += float(red.sum()); red_max = max(red_max, float(red.max()))
+        red_c_sum += float(within_trial_redundancy(t, center=True).sum())
         eff_sum += float(effective_rank(t).sum())
-        if len(live_sample) < 2048:
-            live_sample.append(arr)
+        if live_trials < 2048:
+            take = min(2048 - live_trials, arr.shape[0])
+            live_sample.append(arr[:take]); live_trials += take
     trials = index["total_rows"]
     mean_red = red_sum / trials
+    mean_red_centered = red_c_sum / trials
     mean_eff = eff_sum / trials
-    live = position_liveness(torch.from_numpy(np.concatenate(live_sample, axis=0)[:2048]))
+    live = position_liveness(torch.from_numpy(np.concatenate(live_sample, axis=0)))
     report = {
         "cohort_trials": trials, "tokens_per_trial": TOKEN_COUNT, "dim": TOKEN_DIM,
         "finite": finite,
         "token_norm_mean": norm_sum / count, "token_norm_min": norm_min, "token_norm_max": norm_max,
         "within_trial_redundancy_mean": mean_red, "within_trial_redundancy_max": red_max,
+        "within_trial_redundancy_centered_mean": mean_red_centered,
         "effective_rank_mean": mean_eff, "effective_rank_fraction_of_T": mean_eff / TOKEN_COUNT,
-        **{f"{k}_sample2048": v for k, v in live.items()},
+        **{f"{k}_sample{live_trials}": v for k, v in live.items()},
         "verdict": verdict_from_stats(mean_red, mean_eff, TOKEN_COUNT, finite, norm_min),
+        "verdict_note": ("Advisory feasibility gate, NOT model selection. If verdict is WEAK "
+                         "but within_trial_redundancy_centered_mean is much lower than the raw "
+                         "mean, the tokens are anisotropic (shared DC direction), not collapsed "
+                         "-- inspect before falling back to Route A."),
     }
     with open(args.output_root / "gate1_token_diagnostic.json", "w", encoding="utf-8") as handle:
         _json.dump(report, handle, indent=2, sort_keys=True); handle.write("\n")

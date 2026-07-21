@@ -242,11 +242,15 @@ class GLIMTextTokenEmbedder:
         GLIM = load_upstream_glim_class(glim_root.resolve())
         model = GLIM.load_from_checkpoint(str(checkpoint), map_location="cpu", strict=False)
         model.eval().to(self.device)
-        # Deterministic full-precision text encoder (match the vector extractor's model,
-        # but keep encode_text in float32 so tokens are reproducible across GPUs).
+        # Match the frozen text-VECTOR extractor's precision path exactly: fp16 T5 +
+        # fp16 autocast on CUDA. FLAN-T5-large is numerically unstable in fp16, so the
+        # emitted hidden states differ materially from fp32; to keep these unpooled
+        # tokens the true counterpart of the established pooled text vectors (and the
+        # 0.32 anchor), the token path must reproduce that same fp16 computation.
+        self.text_dtype = torch.float16 if self.device.type == "cuda" else torch.float32
         model.tokenizer = AutoTokenizer.from_pretrained(model.text_model_id)
         model.text_model = T5ForConditionalGeneration.from_pretrained(
-            model.text_model_id, torch_dtype=torch.float32
+            model.text_model_id, torch_dtype=self.text_dtype
         ).requires_grad_(False).eval().to(self.device)
         model.eval()
         self.model = model
@@ -256,7 +260,9 @@ class GLIMTextTokenEmbedder:
 
     def __call__(self, texts: list[str]):
         torch = self.torch
-        with torch.inference_mode():
+        with torch.inference_mode(), torch.autocast(
+            device_type=self.device.type, dtype=torch.float16, enabled=self.device.type == "cuda"
+        ):
             ids, mask = self.model.tokenize(texts, self.token_len)
             hidden, hidden_mask = self.model.encode_text(ids, mask)
             vectors = self.model.aligner.embed_text(hidden, hidden_mask)

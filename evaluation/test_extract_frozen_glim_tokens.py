@@ -17,6 +17,7 @@ from evaluation.extract_frozen_glim_tokens import (
     TOKEN_COUNT,
     TOKEN_DIM,
     run_token_extraction,
+    select_primary_cohort,
     token_chunk_sha256,
 )
 
@@ -135,6 +136,19 @@ class TokenExtractionTests(unittest.TestCase):
                     checkpoint_sha256=CHECKPOINT_SHA, glim_commit=GLIM_COMMIT,
                     prompt_mode="all_masked", load_eeg=fake_load_eeg, chunk_size=2,
                 )
+
+    def test_select_primary_cohort(self):
+        rows = [
+            {"dataset_version": "ZuCo2", "reading_task": "NR", "source_dataframe_row_index": 5},
+            {"dataset_version": "ZuCo2", "reading_task": "TSR", "source_dataframe_row_index": 1},
+            {"dataset_version": "ZuCo2", "reading_task": "SR", "source_dataframe_row_index": 2},  # drop SR
+            {"dataset_version": "ZuCo1", "reading_task": "NR", "source_dataframe_row_index": 3},   # drop ZuCo1
+            {"dataset_version": "ZuCo2", "reading_task": "NR", "source_dataframe_row_index": 0},
+        ]
+        cohort = select_primary_cohort(rows)
+        self.assertEqual([r["source_dataframe_row_index"] for r in cohort], [0, 1, 5])  # sorted, filtered
+        self.assertTrue(all(r["dataset_version"] == "ZuCo2" for r in cohort))
+        self.assertTrue(all(r["reading_task"] in {"NR", "TSR"} for r in cohort))
 
     def test_rejects_bad_prompt_mode_and_dtype(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -214,3 +214,105 @@ class GLIMTokenEmbedder:
         if tokens.shape != (batch, TOKEN_COUNT, TOKEN_DIM):
             raise ValueError(f"GLIM returned tokens {tokens.shape}, expected {(batch, TOKEN_COUNT, TOKEN_DIM)}")
         return tokens
+
+
+def select_primary_cohort(train_rows: list[dict]) -> list[dict]:
+    """Filter canonical train rows to the P4b primary_zuco2_nr_tsr cohort."""
+    cohort = [
+        r for r in train_rows
+        if str(r["dataset_version"]) == "ZuCo2" and str(r["reading_task"]) in {"NR", "TSR"}
+    ]
+    cohort.sort(key=lambda r: int(r["source_dataframe_row_index"]))
+    return cohort
+
+
+def main() -> None:
+    import argparse
+    import json as _json
+
+    import torch
+
+    from evaluation.extract_frozen_glim_vectors import (
+        ShardSignalStore,
+        load_development_rows,
+        sha256,
+    )
+    from evaluation.token_diagnostics import token_collapse_report
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset-root", type=Path, required=True)
+    parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--glim-root", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--glim-commit", required=True)
+    parser.add_argument("--expected-index-sha256", required=True)
+    parser.add_argument("--expected-checkpoint-sha256", required=True)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--chunk-size", type=int, default=128)
+    parser.add_argument("--dtype", choices=("float16", "float32"), default="float16")
+    parser.add_argument("--diagnostics-sample", type=int, default=512)
+    parser.add_argument("--smoke-limit", type=int)
+    args = parser.parse_args()
+
+    checkpoint_sha = sha256(args.checkpoint)
+    if checkpoint_sha != args.expected_checkpoint_sha256:
+        raise ValueError("GLIM checkpoint SHA256 mismatch")
+
+    train, _validation, _manifest = load_development_rows(
+        args.dataset_root, args.expected_index_sha256
+    )
+    cohort = select_primary_cohort(train)
+    nr = sum(1 for r in cohort if str(r["reading_task"]) == "NR")
+    tsr = sum(1 for r in cohort if str(r["reading_task"]) == "TSR")
+    print({"primary_cohort_rows": len(cohort), "NR": nr, "TSR": tsr})
+    # Expected P4b cohort: 9,011 = 4,126 NR + 4,885 TSR. Assert unless smoke-limited.
+    if args.smoke_limit is None and (len(cohort), nr, tsr) != (9011, 4126, 4885):
+        raise ValueError(f"cohort != frozen P4b inventory: {(len(cohort), nr, tsr)}")
+    if args.smoke_limit is not None:
+        cohort = cohort[: args.smoke_limit]
+
+    store = ShardSignalStore(args.dataset_root)
+    embedder = GLIMTokenEmbedder(
+        args.glim_root, args.checkpoint, args.device, prompt_mode="all_masked"
+    )
+
+    def embed(eeg_list, mask_list, sample_ids, source_rows, tasks):
+        parts = []
+        for i in range(0, len(eeg_list), args.batch_size):
+            j = i + args.batch_size
+            parts.append(embedder(
+                eeg_list[i:j], mask_list[i:j], sample_ids[i:j], source_rows[i:j], tasks[i:j]
+            ))
+        return np.concatenate(parts, axis=0)
+
+    index = run_token_extraction(
+        cohort, embed, args.output_root,
+        checkpoint_sha256=checkpoint_sha, glim_commit=args.glim_commit,
+        prompt_mode="all_masked", load_eeg=store.load,
+        chunk_size=args.chunk_size, dtype=args.dtype,
+    )
+    store.close()
+    print(f"TOKEN EXTRACTION: {index['total_rows']} rows, {index['num_chunks']} chunks, "
+          f"combined_chunk_sha256={index['combined_chunk_sha256']}")
+
+    # Gate-1 diagnostic on a sample of the extracted tokens (make-or-break check).
+    want = min(args.diagnostics_sample, index["total_rows"])
+    collected, got = [], 0
+    for entry in index["chunks"]:
+        arr = np.load(args.output_root / entry["token_file"])["tokens"]
+        collected.append(arr)
+        got += arr.shape[0]
+        if got >= want:
+            break
+    tokens = torch.from_numpy(
+        np.concatenate(collected, axis=0)[:want].astype(np.float32)
+    )
+    report = token_collapse_report(tokens)
+    print("GATE-1 TOKEN DIAGNOSTIC:")
+    print(_json.dumps(report, indent=2, sort_keys=True))
+    print("VERDICT:", report["verdict"])
+
+
+if __name__ == "__main__":
+    main()

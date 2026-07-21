@@ -127,7 +127,10 @@ def run_text_token_extraction(
         tokens, masks, vectors = embed(texts)
         tokens = np.ascontiguousarray(tokens).astype(np_dtype, copy=False)
         masks = np.ascontiguousarray(masks).astype(np.int8, copy=False)
-        vectors = np.ascontiguousarray(vectors).astype(np_dtype, copy=False)
+        # Pooled vector kept float32 (matches the frozen text-vector storage) so the
+        # Gate-2 identity comparison measures pure COMPUTE agreement, not conflated
+        # with this side's float16 quantization. Tokens stay float16 for MaxSim.
+        vectors = np.ascontiguousarray(vectors).astype(np.float32, copy=False)
         if tokens.shape != (len(batch), token_len, TOKEN_DIM):
             raise ValueError(
                 f"chunk {chunk_number}: expected tokens {(len(batch), token_len, TOKEN_DIM)}, got {tokens.shape}"
@@ -201,6 +204,7 @@ def run_text_token_extraction(
         "token_len": token_len,
         "token_dim": TOKEN_DIM,
         "dtype": dtype,
+        "vector_dtype": "float32",
         "unique_text_identities": len(index_rows),
         "mapped_trials": len(mapping),
         "num_chunks": len(chunk_entries),

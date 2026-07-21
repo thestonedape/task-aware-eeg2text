@@ -86,6 +86,7 @@ class TextTokenExtractionTests(unittest.TestCase):
                 self.assertEqual(arch["tokens"].dtype, np.float16)
                 self.assertEqual(arch["masks"].shape, (2, LEN))
                 self.assertEqual(arch["vectors"].shape, (2, TOKEN_DIM))
+                self.assertEqual(arch["vectors"].dtype, np.float32)  # pooled vector kept fp32
             index = (Path(tmp) / "text_token_index.csv").read_text(encoding="utf-8")
             self.assertEqual(index.count("\n"), 11)  # header + 10 rows
 

@@ -92,6 +92,7 @@ def assemble_pair_trials(
             task=str(target["reading_task"]),
             subject_id=str(target["subject_id"]),
             text_id=str(target["text_target_id"]),
+            trial_id=tid,
             positive_index=positive_index,
             eeg_vector=eeg["vector"],
             candidate_text_vectors=torch.stack(text_vectors),

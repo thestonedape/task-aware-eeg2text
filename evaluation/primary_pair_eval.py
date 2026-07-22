@@ -51,6 +51,7 @@ class PairTrial:
     wrong_eeg_vector: torch.Tensor | None = None      # [D]      matched-wrong donor
     wrong_eeg_tokens: torch.Tensor | None = None      # [Te, D]
     wrong_eeg_mask: torch.Tensor | None = None        # [Te]
+    trial_id: str = ""                                # for aggregation + artifacts
 
     def __post_init__(self) -> None:
         if self.task not in TASKS:
@@ -119,14 +120,15 @@ def arm_reciprocal_ranks(adapter, arm: str, trials: list[PairTrial], source: str
     if not trials:
         raise ValueError("no trials to evaluate")
     score = pooled_reciprocal_rank if arm == "pooled" else maxsim_reciprocal_rank
-    rr, subjects, texts, tasks = [], [], [], []
+    rr, subjects, texts, tasks, trial_ids = [], [], [], [], []
     with torch.inference_mode():
         for trial in trials:
             rr.append(score(adapter, trial, source))
             subjects.append(trial.subject_id)
             texts.append(trial.text_id)
             tasks.append(trial.task)
-    return {"rr": rr, "subjects": subjects, "texts": texts, "tasks": tasks}
+            trial_ids.append(trial.trial_id)
+    return {"rr": rr, "subjects": subjects, "texts": texts, "tasks": tasks, "trial_ids": trial_ids}
 
 
 def macro_mrr(adapter, arm_name: str, trials: list[PairTrial], source: str = "correct") -> float:

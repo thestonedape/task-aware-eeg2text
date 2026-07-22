@@ -6,8 +6,14 @@ import unittest
 
 import torch
 
-from evaluation.primary_pair_eval import maxsim_reciprocal_rank, pooled_reciprocal_rank
-from evaluation.token_campaign import assemble_pair_trials
+from evaluation.primary_pair_eval import (
+    MAXSIM_SOURCES,
+    POOLED_SOURCES,
+    maxsim_reciprocal_rank,
+    pooled_reciprocal_rank,
+)
+from evaluation.token_campaign import assemble_pair_trials, train_and_confirm
+from evaluation.token_training import TrainConfig
 from project_adapters.pooled_retrieval import PooledContrastiveAdapter
 from project_adapters.token_late_interaction import TokenLateInteractionAdapter
 
@@ -102,6 +108,42 @@ class AssemblyTests(unittest.TestCase):
                 c["is_positive"] = "True" if c["is_positive"] else "False"
         trials = assemble_pair_trials(targets, pools, donors, eeg, text, require_donor=True)
         self.assertTrue(all(t.positive_index == 5 for t in trials))
+
+
+class OrchestrationTests(unittest.TestCase):
+    def _fit_features(self, targets, eeg, text):
+        fit_text_ids = [t["text_target_id"] for t in targets]
+        pooled = {
+            "eeg_vectors": torch.stack([eeg[t["trial_id"]]["vector"] for t in targets]),
+            "text_vectors": torch.stack([text[t["text_target_id"]]["vector"] for t in targets]),
+        }
+        maxsim = {
+            "eeg_tokens": torch.stack([eeg[t["trial_id"]]["tokens"] for t in targets]),
+            "text_tokens": torch.stack([text[t["text_target_id"]]["tokens"] for t in targets]),
+            "text_masks": torch.stack([text[t["text_target_id"]]["mask"] for t in targets]),
+        }
+        return fit_text_ids, pooled, maxsim
+
+    def test_train_and_confirm_runs_both_arms_with_checkpoint_selection(self):
+        targets, pools, donors, eeg, text = build_world()
+        confirmation = assemble_pair_trials(targets, pools, donors, eeg, text, require_donor=True)
+        checkpoint = assemble_pair_trials(targets, pools, {}, eeg, text, require_donor=False)
+        fit_text_ids, pooled_feats, maxsim_feats = self._fit_features(targets, eeg, text)
+        config = TrainConfig(epochs=4, batch_size=3, lr=1e-2)
+
+        for arm, feats in (("pooled", pooled_feats), ("maxsim", maxsim_feats)):
+            out = train_and_confirm(
+                arm, feats, fit_text_ids, checkpoint, confirmation, config, seed=0, select_every=2,
+            )
+            expected_sources = MAXSIM_SOURCES if arm == "maxsim" else POOLED_SOURCES
+            self.assertEqual(set(out), set(expected_sources))
+            for source in expected_sources:
+                rr = out[source]["rr"]
+                self.assertEqual(len(rr), len(confirmation))
+                self.assertTrue(all(1.0 / 24 <= x <= 1.0 for x in rr))
+            # labels come back aligned to the confirmation trials
+            self.assertEqual(out["correct"]["tasks"], [t.task for t in confirmation])
+            self.assertEqual(out["correct"]["subjects"], [t.subject_id for t in confirmation])
 
 
 if __name__ == "__main__":

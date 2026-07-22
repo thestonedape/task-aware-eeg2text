@@ -19,7 +19,14 @@ from __future__ import annotations
 
 import torch
 
-from evaluation.primary_pair_eval import PairTrial
+from evaluation.primary_pair_eval import (
+    MAXSIM_SOURCES,
+    POOLED_SOURCES,
+    PairTrial,
+    arm_reciprocal_ranks,
+    macro_mrr,
+)
+from evaluation.token_training import TrainConfig, deterministic_batches, train_arm
 
 POOL_SIZE = 24
 
@@ -102,4 +109,42 @@ def _as_bool(value) -> bool:
     return str(value).strip().lower() in {"true", "1", "yes"}
 
 
-__all__ = ["assemble_pair_trials", "POOL_SIZE"]
+def train_and_confirm(
+    arm: str,
+    fit_features: dict,
+    fit_text_ids: list,
+    checkpoint_trials: list[PairTrial],
+    confirmation_trials: list[PairTrial],
+    config: TrainConfig,
+    seed: int,
+    select_every: int,
+    device: str = "cpu",
+) -> dict:
+    """One (arm, fold, seed) run: train on the fit trials with dev-MRR checkpoint
+    selection, then score the confirmation pool. Returns per-source per-trial
+    reciprocal ranks + labels.
+
+    ``fit_features``: row-aligned training tensors for the fit trials (pooled arm
+    needs ``eeg_vectors``/``text_vectors``; MaxSim arm ``eeg_tokens``/``text_tokens``
+    /``text_masks``). ``fit_text_ids``: the text identity per fit trial, so batches
+    hold distinct texts (no false negatives). The checkpoint-selection metric is
+    macro-MRR on ``checkpoint_trials``; scoring differs by arm, everything else is
+    shared, per the locked primary pair.
+    """
+    sources = MAXSIM_SOURCES if arm == "maxsim" else POOLED_SOURCES
+    batches = deterministic_batches(
+        len(fit_text_ids), config.batch_size, config.epochs, seed, text_ids=fit_text_ids
+    )
+
+    def select_hook(adapter):
+        return macro_mrr(adapter, arm, checkpoint_trials)
+
+    adapter, _trace = train_arm(
+        arm, fit_features, batches, config, seed, device=device,
+        select_hook=select_hook, select_every=select_every,
+    )
+    return {source: arm_reciprocal_ranks(adapter, arm, confirmation_trials, source)
+            for source in sources}
+
+
+__all__ = ["assemble_pair_trials", "train_and_confirm", "POOL_SIZE"]

@@ -22,8 +22,9 @@ must be frozen in the Gate-3 run config (hashed at launch) exactly as P4b did.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Callable, Literal, Sequence
 
 import torch
 from torch import nn
@@ -128,6 +129,8 @@ def train_arm(
     config: TrainConfig,
     seed: int,
     device: str = "cpu",
+    select_hook: "Callable[[nn.Module], float] | None" = None,
+    select_every: int | None = None,
 ) -> tuple[nn.Module, list[float]]:
     """Train one arm over a fixed batch schedule; return (adapter, loss trace).
 
@@ -135,10 +138,18 @@ def train_arm(
     ``eeg_vectors``/``text_vectors`` [N,D]; MaxSim arm needs ``eeg_tokens``
     [N,T,D], ``text_tokens`` [N,T,D], ``text_masks`` [N,T]. Each trial's positive
     text occupies the same row index; in-batch negatives are the other rows.
+
+    Checkpoint selection (locked protocol §11): if ``select_hook`` is given, it is
+    called every ``select_every`` steps on the current adapter and must return a
+    development score (macro-MRR on the selection fold); the adapter is restored to
+    the highest-scoring snapshot before returning. Identical hook/schedule across
+    arms keeps selection fair.
     """
     missing = [k for k in _required_keys(arm) if k not in features]
     if missing:
         raise ValueError(f"{arm} arm missing features: {missing}")
+    if select_hook is not None and not select_every:
+        raise ValueError("select_every must be a positive step interval when select_hook is set")
     torch.manual_seed(int(seed))                    # identical adapter init across arms
     adapter = _make_adapter(arm).to(device).train()
     optimizer = torch.optim.AdamW(
@@ -146,7 +157,9 @@ def train_arm(
     )
     feats = {k: v.to(device) for k, v in features.items()}
     trace: list[float] = []
-    for batch in batches:
+    best_score: float | None = None
+    best_state: dict | None = None
+    for step, batch in enumerate(batches, start=1):
         index = torch.as_tensor(batch, dtype=torch.long, device=device)
         loss = _batch_loss(arm, adapter, feats, index, config.temperature)
         optimizer.zero_grad(set_to_none=True)
@@ -155,6 +168,16 @@ def train_arm(
             nn.utils.clip_grad_norm_(adapter.parameters(), config.grad_clip)
         optimizer.step()
         trace.append(float(loss.detach()))
+        if select_hook is not None and step % select_every == 0:
+            adapter.eval()
+            with torch.inference_mode():
+                score = float(select_hook(adapter))
+            adapter.train()
+            if best_score is None or score > best_score:
+                best_score = score
+                best_state = copy.deepcopy(adapter.state_dict())
+    if best_state is not None:                       # restore the best-dev checkpoint
+        adapter.load_state_dict(best_state)
     return adapter.eval(), trace
 
 

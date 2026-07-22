@@ -47,6 +47,19 @@ class BatchScheduleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             deterministic_batches(10, 64, 1, seed=0)
 
+    def test_text_unique_batches_have_no_repeated_texts(self):
+        # 300 trials over 60 texts (5 repeats each) -> naive batches would collide
+        text_ids = [f"T{i % 60}" for i in range(300)]
+        batches = deterministic_batches(300, 32, epochs=2, seed=3, text_ids=text_ids)
+        self.assertTrue(batches)
+        for batch in batches:
+            self.assertEqual(len(batch), 32)                       # full batches
+            texts = [text_ids[i] for i in batch]
+            self.assertEqual(len(texts), len(set(texts)))          # all distinct
+        # deterministic
+        again = deterministic_batches(300, 32, epochs=2, seed=3, text_ids=text_ids)
+        self.assertEqual(batches, again)
+
 
 class TrainerTests(unittest.TestCase):
     def test_both_arms_initialize_identically(self):

@@ -23,7 +23,7 @@ must be frozen in the Gate-3 run config (hashed at launch) exactly as P4b did.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Sequence
 
 import torch
 from torch import nn
@@ -51,15 +51,21 @@ class TrainConfig:
 
 
 def deterministic_batches(
-    num_trials: int, batch_size: int, epochs: int, seed: int
+    num_trials: int, batch_size: int, epochs: int, seed: int,
+    text_ids: "Sequence[str] | None" = None,
 ) -> list[list[int]]:
-    """Seeded per-epoch permutations chunked into full batches (drop remainder).
+    """Seeded per-epoch batches, arm-independent by construction.
 
-    Arm-independent by construction: the same (num_trials, batch_size, epochs,
-    seed) yields the identical batch schedule, so both arms see identical data
-    ordering and identical in-batch negatives. Full batches only (a partial final
-    batch is dropped) so every step has a square score matrix for the symmetric
-    loss and both arms step in lockstep.
+    Same (num_trials, batch_size, epochs, seed[, text_ids]) => identical schedule,
+    so both arms see identical data ordering and identical in-batch negatives.
+    Full batches only (partial final batch dropped) so every step has a square
+    score matrix and both arms step in lockstep.
+
+    ``text_ids`` (one normalized-text identity per trial) makes each batch contain
+    DISTINCT texts: a trial whose text already sits in the current batch is
+    deferred to the next. This removes false negatives (a repeated sentence acting
+    as its own contrastive negative), matching the P4b batching rigor. Without
+    ``text_ids`` the batcher is a plain permutation (used only in tests).
     """
     if num_trials < batch_size:
         raise ValueError("num_trials must be >= batch_size for a full batch")
@@ -67,8 +73,26 @@ def deterministic_batches(
     batches: list[list[int]] = []
     for _ in range(int(epochs)):
         perm = torch.randperm(num_trials, generator=generator).tolist()
-        for start in range(0, num_trials - batch_size + 1, batch_size):
-            batches.append(perm[start:start + batch_size])
+        if text_ids is None:
+            for start in range(0, num_trials - batch_size + 1, batch_size):
+                batches.append(perm[start:start + batch_size])
+            continue
+        # Greedy fill: place each trial in the earliest open batch whose texts are
+        # all distinct from it, preserving determinism from the fixed permutation.
+        open_batches: list[list[int]] = [[]]
+        open_texts: list[set] = [set()]
+        for idx in perm:
+            tid = text_ids[idx]
+            placed = False
+            for b, seen in zip(open_batches, open_texts):
+                if len(b) < batch_size and tid not in seen:
+                    b.append(idx); seen.add(tid); placed = True
+                    break
+            if not placed:
+                open_batches.append([idx]); open_texts.append({tid})
+            full = [i for i, b in enumerate(open_batches) if len(b) == batch_size]
+            for i in reversed(full):
+                batches.append(open_batches.pop(i)); open_texts.pop(i)
     return batches
 
 

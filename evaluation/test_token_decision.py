@@ -16,6 +16,10 @@ from evaluation.token_decision import (
     DELTA_SUP,
     apply_primary_decision,
     paired_delta,
+    pool_size_robust,
+    seed_averaged_effect,
+    seed_consistent,
+    subject_consistent,
     top1_indicator,
 )
 
@@ -123,6 +127,34 @@ class DecisionTests(unittest.TestCase):
 
     def test_delta_sup_is_locked_value(self):
         self.assertEqual(DELTA_SUP, 0.02)
+
+
+class OperationalizationTests(unittest.TestCase):
+    def test_seed_averaged_effect(self):
+        rr = seed_averaged_effect([[1.0, 0.5, 0.0], [0.0, 0.5, 1.0], [0.5, 0.5, 0.5]])
+        self.assertTrue(np.allclose(rr, [0.5, 0.5, 0.5]))
+        with self.assertRaises(ValueError):
+            seed_averaged_effect([])
+
+    def test_seed_consistent_requires_all_positive(self):
+        self.assertTrue(seed_consistent([0.03, 0.01, 0.005]))
+        self.assertFalse(seed_consistent([0.03, -0.001, 0.02]))   # one seed reverses
+        with self.assertRaises(ValueError):
+            seed_consistent([])
+
+    def test_subject_consistent(self):
+        self.assertTrue(subject_consistent({"two_way_lower_bound": 0.004}))
+        self.assertFalse(subject_consistent({"two_way_lower_bound": -0.001}))
+        self.assertFalse(subject_consistent({"two_way_lower_bound": 0.0}))
+
+    def test_pool_size_robust(self):
+        good = {24: {"two_way_lower_bound": 0.02}, 48: {"two_way_lower_bound": 0.01},
+                96: {"two_way_lower_bound": 0.005}, 192: {"two_way_lower_bound": 0.001}}
+        self.assertTrue(pool_size_robust(good))
+        bad = dict(good); bad[192] = {"two_way_lower_bound": -0.001}  # vanishes at large pool
+        self.assertFalse(pool_size_robust(bad))
+        with self.assertRaises(ValueError):
+            pool_size_robust({})
 
 
 if __name__ == "__main__":

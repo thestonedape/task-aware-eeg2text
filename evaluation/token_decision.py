@@ -50,6 +50,39 @@ def paired_delta(
     return clustered_delta(a - b, subjects, texts, tasks, **kwargs)
 
 
+def seed_averaged_effect(per_seed_rr: "list[Sequence[float]]") -> np.ndarray:
+    """§16.1: average each trial's reciprocal rank across seeds -> one value per trial.
+
+    ``per_seed_rr`` is one array per seed, all row-aligned to the same trials.
+    Returns the per-trial mean; seeds are nuisance variation, so the trial stays
+    the unit of inference (no pseudo-replication).
+    """
+    stacked = np.vstack([np.asarray(rr, dtype=np.float64) for rr in per_seed_rr])
+    if stacked.ndim != 2 or stacked.shape[0] < 1:
+        raise ValueError("per_seed_rr must be a non-empty list of equal-length arrays")
+    return stacked.mean(axis=0)
+
+
+def seed_consistent(per_seed_delta_points: "Sequence[float]") -> bool:
+    """§16.2: all per-seed task-macro Δ point estimates favor MaxSim (> 0)."""
+    points = [float(d) for d in per_seed_delta_points]
+    if not points:
+        raise ValueError("need at least one seed-level delta")
+    return all(d > 0.0 for d in points)
+
+
+def subject_consistent(subject_held_out_delta: dict) -> bool:
+    """§16.3: subject-held-out Δ two-way clustered lower bound > 0."""
+    return subject_held_out_delta["two_way_lower_bound"] > 0.0
+
+
+def pool_size_robust(pool_sweep_deltas: "dict[int, dict]") -> bool:
+    """§16.4: Δ two-way lower bound > 0 at every swept pool size."""
+    if not pool_sweep_deltas:
+        raise ValueError("pool sweep must contain at least one pool size")
+    return all(d["two_way_lower_bound"] > 0.0 for d in pool_sweep_deltas.values())
+
+
 def apply_primary_decision(
     mrr_delta: dict,
     top1_delta: dict,
@@ -94,4 +127,7 @@ def apply_primary_decision(
     }
 
 
-__all__ = ["DELTA_SUP", "top1_indicator", "paired_delta", "apply_primary_decision"]
+__all__ = [
+    "DELTA_SUP", "top1_indicator", "paired_delta", "apply_primary_decision",
+    "seed_averaged_effect", "seed_consistent", "subject_consistent", "pool_size_robust",
+]

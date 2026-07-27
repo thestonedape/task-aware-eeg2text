@@ -1,6 +1,35 @@
-# <span style="font-variant: small-caps;">Beyond LLM Priors</span>: A Signal-Grounded Framework with Decoupled Semantic Guidance for EEG-to-Text Decoding
+# Task-Aware EEG-to-Text: A Controlled Retrieval Study on ZuCo
+
+A controlled study of **EEG-to-text retrieval** on ZuCo, built on the frozen GLIM representation and the SemKey framework. The emphasis is measurement — what survives when the evaluation is tightened — rather than a new decoder.
 
 ## 📌 Overview
+
+This project makes three joined contributions (working manuscript under `notes/03_manuscript/`):
+
+1. **A controlled retrieval audit.** Candidate-pool composition can inflate a released system's apparent retrieval: matching distractors by dataset and reading task removes about 95% of its above-chance Top-1 margin, and sentence length adds nothing.
+2. **EEG-specific pooled retrieval, plus a task-segmentation null.** A purpose-trained contrastive adapter over the frozen pooled GLIM representation reaches macro MRR ≈ 0.32 (analytic chance 0.157), while task/subject/length-matched wrong-real EEG stays at chance — retrieval that is genuinely EEG-specific. Yet segmenting the contrastive objective by *true* reading task adds no measurable advantage over global mixed-task or size-matched pseudo-task training (a preregistered null).
+3. **A pooled-versus-token diagnostic (in progress).** ColBERT-style MaxSim late interaction over GLIM's unpooled 96 tokens, capacity-matched to the pooled arm, testing whether finer alignment adds retrieval value *beyond* the already-strong pooled baseline.
+
+Every quantitative claim is bound to a hash-verified artifact under a preregistered, matched-control protocol (explicit chance, matched candidate pools, matched-wrong-real-EEG substitution, sentence-grouped cross-fitting, clustered inference); the held-out test partition stays sealed.
+
+**Status.** Gate 2 is closed — the token substrate is extracted and identity-verified, and the pooled-vs-token protocol is frozen (`notes/02_workstreams/token_level_retrieval/`). Gate 3 (the pooled-vs-token training campaign) is built and unit-tested locally; the Kaggle run is the remaining piece.
+
+## 🗂 Repository layout
+
+| Path | Contents |
+|---|---|
+| `evaluation/` | retrieval + decision harness: GLIM token/vector extractors, the cross-fitted trainer, clustered bootstrap, and decision rules |
+| `project_adapters/` | rank-96 residual adapters (pooled cosine + token MaxSim) over the frozen GLIM representation |
+| `kaggle/` | pinned-commit Kaggle notebooks (extraction, identity checks) — see [`kaggle/README.md`](kaggle/README.md) |
+| `notes/` | working manuscript, decision log, and the frozen protocol locks |
+
+## 🔗 Built on
+
+This work reuses the frozen **GLIM** EEG representation and the **SemKey** framework as components (they are not retrained end-to-end here). SemKey's own setup and training instructions are retained below.
+
+---
+
+# Upstream framework: <span style="font-variant: small-caps;">SemKey</span>
 
 <div align="center">
 

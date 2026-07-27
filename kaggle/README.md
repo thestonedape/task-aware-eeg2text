@@ -95,3 +95,18 @@ The canonical adapter maps the released GLIM prompt as the checkpoint-compatible
 base and adds separate zero-initialized trainable SR/NR/TSR deltas. The smoke
 must report the same `sample_id` and source dataframe row as the SemKey-compatible
 loader. Similar module names across GLIM and SemKey are not checkpoint evidence.
+
+## Token-study notebooks (Route B: pooled-vs-token diagnostic)
+
+Route B pipeline (see `/CLAUDE.md` and decisions D-027 / D-028 / D-029 / D-030). Each notebook clones a pinned commit of `github.com/thestonedape/task-aware-eeg2text`, needs the `GITHUB_TOKEN` secret described above, and (except the CPU checks) a GPU. Run in order; save each extraction's `/kaggle/working` output as a private Kaggle Dataset.
+
+1. **`extract_frozen_glim_tokens.ipynb`** (GPU) — Gate 1. One complete run over the full 9,011-trial primary ZuCo2 NR/TSR cohort: co-extracts GLIM's 96 unpooled `eeg_tokens [96,1024]` and the pooled `eeg_vector [1024]` from one prompt-neutral (`all_masked`) forward pass, then prints the token-collapse verdict (was **RICH**). Inputs: canonical sharded dataset + GLIM checkpoint.
+2. **`extract_frozen_glim_text_tokens.ipynb`** (GPU) — Gate 2. Extracts the unpooled `encode_text` text tokens `[96,1024]` + attention mask, plus the pooled `embed_text` vector, for every development text identity. Runs FLAN-T5-large in **fp16 autocast, sub-batched at 64**, to match the frozen text-vector pipeline byte-for-byte. Same inputs.
+3. **`gate2_pooled_vector_identity.ipynb`** (CPU) — Gate 2A. Confirms the co-extracted pooled vectors reproduce the frozen pooled vectors under a tight bar (EEG token run vs P4b `eeg/vector_index.csv`; text token run vs frozen `text/text_vector_index.csv`). Auto-discovers attached datasets; prints text provenance. Result: EEG cosine 0.99999998, text **bit-identical**.
+4. **`gate2_text_fp16_diagnostic.ipynb`** (GPU) — one-off characterization that isolated the text pooled-vector residual to fp16 GEMM **batch-size** sensitivity (fp16 is deterministic run-to-run; batch 256-vs-64 reproduces the residual). Storage and library version were ruled out.
+
+**Attach for the identity check (step 3):** the EEG token dataset, the batch-64 text token dataset, and `task-aware-eegtotext` **v2** (the prompt-neutral pilot-input artifact holding the frozen `eeg/vector_index.csv` and `text/text_vector_index.csv`). Use `glim-tokens` **v2** for the EEG tokens (a later version is text-only).
+
+**Gate 3 (the pooled-vs-token training campaign)** is built and unit-tested as a local harness (`evaluation/token_campaign*.py`, `token_decision.py`, `primary_pair_eval.py`, `token_training.py`); its pinned Kaggle run notebook is the remaining piece. Protocol is frozen in `notes/02_workstreams/token_level_retrieval/gate2b_lock_2026-07-22.md` (δ_sup = 0.02, δ_equiv = 0.01).
+
+> This section is kept **uncommitted** (local documentation only), per the repo's standing rule; it is not pushed to the `project` remote.

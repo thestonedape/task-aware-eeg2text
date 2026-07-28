@@ -65,14 +65,10 @@ def assemble_pair_trials(
             raise ValueError(f"target {tid}: expected exactly one positive, got {len(positives)}")
         positive_index = positives[0]
 
-        text_tokens, text_masks, text_vectors = [], [], []
-        for candidate in pool:                              # preserve candidate-rank order
-            text = text_lookup.get(str(candidate["candidate_text_target_id"]))
-            if text is None:
-                raise KeyError(f"missing text representation for {candidate['candidate_text_target_id']}")
-            text_tokens.append(text["tokens"])
-            text_masks.append(text["mask"])
-            text_vectors.append(text["vector"])
+        candidate_text_ids = [str(c["candidate_text_target_id"]) for c in pool]  # rank order
+        for cid in candidate_text_ids:                      # validate; resolved at scoring time
+            if cid not in text_lookup:
+                raise KeyError(f"missing text representation for {cid}")
 
         eeg = eeg_lookup.get(tid)
         if eeg is None:
@@ -95,10 +91,8 @@ def assemble_pair_trials(
             trial_id=tid,
             positive_index=positive_index,
             eeg_vector=eeg["vector"],
-            candidate_text_vectors=torch.stack(text_vectors),
             eeg_tokens=eeg["tokens"],
-            candidate_text_tokens=torch.stack(text_tokens),
-            candidate_text_mask=torch.stack(text_masks),
+            candidate_text_ids=candidate_text_ids,
             **kwargs,
         ))
     return trials
@@ -116,6 +110,7 @@ def train_and_confirm(
     fit_text_ids: list,
     checkpoint_trials: list[PairTrial],
     confirmation_trials: list[PairTrial],
+    text_lookup: dict,
     config: TrainConfig,
     seed: int,
     select_every: int,
@@ -138,13 +133,13 @@ def train_and_confirm(
     )
 
     def select_hook(adapter):
-        return macro_mrr(adapter, arm, checkpoint_trials)
+        return macro_mrr(adapter, arm, checkpoint_trials, text_lookup)
 
     adapter, _trace = train_arm(
         arm, fit_features, batches, config, seed, device=device,
         select_hook=select_hook, select_every=select_every,
     )
-    return {source: arm_reciprocal_ranks(adapter, arm, confirmation_trials, source)
+    return {source: arm_reciprocal_ranks(adapter, arm, confirmation_trials, text_lookup, source)
             for source in sources}
 
 

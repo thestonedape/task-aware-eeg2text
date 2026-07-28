@@ -62,8 +62,8 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(len(trials), 6)
         for trial in trials:
             self.assertEqual(trial.positive_index, 5)                    # placed at rank 5
-            self.assertEqual(trial.candidate_text_vectors.shape[0], 24)
-            self.assertEqual(trial.candidate_text_tokens.shape, (24, TT, D))
+            self.assertEqual(len(trial.candidate_text_ids), 24)
+            self.assertTrue(all(cid in text for cid in trial.candidate_text_ids))
             self.assertIsNotNone(trial.wrong_eeg_vector)
 
     def test_aligned_positive_ranks_first_both_arms(self):
@@ -71,10 +71,10 @@ class AssemblyTests(unittest.TestCase):
         trials = assemble_pair_trials(targets, pools, donors, eeg, text, require_donor=True)
         pooled, maxsim = PooledContrastiveAdapter(), TokenLateInteractionAdapter()
         for trial in trials:
-            self.assertEqual(pooled_reciprocal_rank(pooled, trial), 1.0)
-            self.assertEqual(maxsim_reciprocal_rank(maxsim, trial), 1.0)
+            self.assertEqual(pooled_reciprocal_rank(pooled, trial, text), 1.0)
+            self.assertEqual(maxsim_reciprocal_rank(maxsim, trial, text), 1.0)
             # matched-wrong donor is a different trial -> should not rank the positive first
-            self.assertLess(pooled_reciprocal_rank(pooled, trial, "matched_wrong"), 1.0)
+            self.assertLess(pooled_reciprocal_rank(pooled, trial, text, "matched_wrong"), 1.0)
 
     def test_checkpoint_partition_needs_no_donor(self):
         targets, pools, donors, eeg, text = build_world()
@@ -133,7 +133,7 @@ class OrchestrationTests(unittest.TestCase):
 
         for arm, feats in (("pooled", pooled_feats), ("maxsim", maxsim_feats)):
             out = train_and_confirm(
-                arm, feats, fit_text_ids, checkpoint, confirmation, config, seed=0, select_every=2,
+                arm, feats, fit_text_ids, checkpoint, confirmation, text, config, seed=0, select_every=2,
             )
             expected_sources = MAXSIM_SOURCES if arm == "maxsim" else POOLED_SOURCES
             self.assertEqual(set(out), set(expected_sources))

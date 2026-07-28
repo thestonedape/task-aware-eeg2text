@@ -93,7 +93,7 @@ def run_campaign(
             for arm, feats in (("pooled", pooled_feats), ("maxsim", maxsim_feats)):
                 out = train_and_confirm(
                     arm, feats, fit_text_ids, checkpoint, confirmation,
-                    config, seed, select_every, device)
+                    text_lookup, config, seed, select_every, device)
                 for source, res in out.items():
                     store = records[arm][seed].setdefault(source, {})
                     for trial_id, rr in zip(res["trial_ids"], res["rr"]):

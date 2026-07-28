@@ -71,6 +71,10 @@ def _reciprocal_rank(scores: torch.Tensor, positive_index: int) -> float:
     return 1.0 / rank
 
 
+def _adapter_device(adapter) -> torch.device:
+    return next(adapter.parameters()).device
+
+
 def pooled_reciprocal_rank(
     adapter: PooledContrastiveAdapter, trial: PairTrial, source: str = "correct"
 ) -> float:
@@ -82,8 +86,9 @@ def pooled_reciprocal_rank(
         vector = trial.wrong_eeg_vector
     else:
         raise ValueError(f"pooled source must be one of {POOLED_SOURCES}")
-    projected = adapter.project(vector.unsqueeze(0))                 # [1, D]
-    scores = pooled_similarity_matrix(projected, trial.candidate_text_vectors)[0]
+    dev = _adapter_device(adapter)
+    projected = adapter.project(vector.unsqueeze(0).to(dev))          # [1, D]
+    scores = pooled_similarity_matrix(projected, trial.candidate_text_vectors.to(dev))[0]
     return _reciprocal_rank(scores, trial.positive_index)
 
 
@@ -104,11 +109,12 @@ def maxsim_reciprocal_rank(
         mask = None
     else:
         raise ValueError(f"maxsim source must be one of {MAXSIM_SOURCES}")
-    projected = adapter.project(tokens.unsqueeze(0))                 # [1, Te, D]
+    dev = _adapter_device(adapter)
+    projected = adapter.project(tokens.unsqueeze(0).to(dev))          # [1, Te, D]
     scores = maxsim_matrix(
-        projected, trial.candidate_text_tokens,
-        eeg_mask=None if mask is None else mask.unsqueeze(0),
-        text_mask=trial.candidate_text_mask,
+        projected, trial.candidate_text_tokens.to(dev),
+        eeg_mask=None if mask is None else mask.unsqueeze(0).to(dev),
+        text_mask=None if trial.candidate_text_mask is None else trial.candidate_text_mask.to(dev),
     )[0]
     return _reciprocal_rank(scores, trial.positive_index)
 

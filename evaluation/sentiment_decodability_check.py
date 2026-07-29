@@ -23,6 +23,7 @@ representation. Pure/CPU-testable; the Kaggle runner wires it to the frozen vect
 from __future__ import annotations
 
 import numpy as np
+from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import balanced_accuracy_score, f1_score, accuracy_score
 from sklearn.pipeline import make_pipeline
@@ -52,9 +53,8 @@ def _feasible_splits(y: np.ndarray, groups: np.ndarray, requested: int) -> int:
     return max(2, min(requested, n_groups, rarest_class_groups))
 
 
-def _oof_balanced_accuracy(X, y, groups, n_splits, seed, C):
-    """Out-of-fold balanced accuracy for one label vector (used for both the real
-    labels and each permutation)."""
+def _oof_predictions(X, y, groups, n_splits, seed, C):
+    """Out-of-fold predictions for one label vector (real labels or a permutation)."""
     predicted = np.full(len(y), -1, dtype=np.int64)
     cv = _splitter(n_splits, seed)
     for train_idx, val_idx in cv.split(X, y, groups):
@@ -66,7 +66,13 @@ def _oof_balanced_accuracy(X, y, groups, n_splits, seed, C):
         model.fit(X[train_idx], y[train_idx])
         predicted[val_idx] = model.predict(X[val_idx])
     scored = predicted >= 0
-    return balanced_accuracy_score(y[scored], predicted[scored]), predicted, scored
+    return predicted, scored
+
+
+def _permuted_balanced_accuracy(X, y_perm, groups, n_splits, seed, C):
+    """Balanced accuracy under one label permutation (a single parallel task)."""
+    predicted, scored = _oof_predictions(X, y_perm, groups, n_splits, seed, C)
+    return float(balanced_accuracy_score(y_perm[scored], predicted[scored]))
 
 
 def plain_decodability(
@@ -78,10 +84,15 @@ def plain_decodability(
     seed: int = 20260729,
     C: float = 1.0,
     n_permutations: int = 200,
+    n_jobs: int = -1,
 ) -> dict:
     """Subject-grouped CV decodability of ``y`` from ``X`` with a label-permutation
     null. Returns the real out-of-fold scores plus the empirical chance level and a
     one-sided permutation p-value on balanced accuracy.
+
+    The permutations are independent, so they run in parallel across CPU cores
+    (``n_jobs``; -1 = all). Permutations are pre-generated from the seeded RNG before
+    dispatch, so the result is identical regardless of ``n_jobs`` (reproducible).
     """
     X = np.asarray(X, dtype=np.float64)
     y = np.asarray(y, dtype=np.int64)
@@ -91,19 +102,19 @@ def plain_decodability(
     n_classes = len(np.unique(y))
     splits = _feasible_splits(y, groups, n_splits)
 
-    bal, predicted, scored = _oof_balanced_accuracy(X, y, groups, splits, seed, C)
+    predicted, scored = _oof_predictions(X, y, groups, splits, seed, C)
     real = {
-        "balanced_accuracy": float(bal),
+        "balanced_accuracy": float(balanced_accuracy_score(y[scored], predicted[scored])),
         "accuracy": float(accuracy_score(y[scored], predicted[scored])),
         "macro_f1": float(f1_score(y[scored], predicted[scored],
                                    labels=list(range(n_classes)), average="macro", zero_division=0)),
     }
 
-    rng = np.random.default_rng(seed)
-    null = np.empty(n_permutations, dtype=np.float64)
-    for i in range(n_permutations):
-        perm = rng.permutation(len(y))                  # break the X<->y link, keep groups fixed
-        null[i], _, _ = _oof_balanced_accuracy(X, y[perm], groups, splits, seed, C)
+    rng = np.random.default_rng(seed)                   # pre-generate perms => order-independent
+    perms = [rng.permutation(len(y)) for _ in range(n_permutations)]
+    null = np.asarray(Parallel(n_jobs=n_jobs)(
+        delayed(_permuted_balanced_accuracy)(X, y[perm], groups, splits, seed, C) for perm in perms
+    ), dtype=np.float64)
     p_value = float((1 + np.sum(null >= real["balanced_accuracy"])) / (n_permutations + 1))
 
     _, counts = np.unique(y, return_counts=True)
